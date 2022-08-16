@@ -5,8 +5,21 @@ mod membership;
 mod state;
 mod types;
 
-pub use io::Message;
-pub use state::{Config, State};
+pub use entry::{Entry, EntryFromRequest, EntryPayload};
+pub use io::{
+    messages::{
+        AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, Message, MessagePayload, PreVoteRequest, PreVoteResponse,
+        VoteRequest, VoteResponse,
+    },
+    persistent_state::PersistentState,
+    Event, Input, Output,
+};
+pub use membership::Membership;
+pub use state::{
+    config::{Config, MembershipChangeCondition},
+    State,
+};
 pub use types::{DatabaseId, Duration, LogIndex, NodeId, RequestId, Term, Timestamp};
 
 #[cfg(test)]

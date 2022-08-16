@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::membership::{Membership, MembershipType};
 use crate::types::NodeId;
 
-pub(crate) struct ElectionState {
+pub struct ElectionState {
     membership: Membership,
     votes_received: HashSet<NodeId>,
     pub(crate) has_majority: bool,

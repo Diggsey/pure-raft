@@ -1,17 +1,21 @@
+use std::{fmt::Debug, sync::Arc};
+
 use serde::{Deserialize, Serialize};
 
-use crate::{membership::Membership, types::Term};
+use crate::{membership::Membership, types::Term, RequestId};
+
+pub trait AppData: Clone + Debug {}
 
 /// A Raft log entry.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Entry {
+pub struct Entry<D> {
     /// This entry's term.
     pub term: Term,
     /// This entry's payload.
-    pub payload: EntryPayload,
+    pub payload: EntryPayload<D>,
 }
 
-impl Entry {
+impl<D> Entry<D> {
     pub fn is_membership_change(&self) -> bool {
         if let EntryPayload::MembershipChange(_) = self.payload {
             true
@@ -23,18 +27,17 @@ impl Entry {
 
 /// Log entry payload variants.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum EntryPayload {
+pub enum EntryPayload<D> {
     /// An empty payload committed by a new cluster leader.
     Blank,
     /// A normal log entry.
-    Application(EntryNormal),
+    Application(D),
     /// A membership change log entry.
     MembershipChange(Membership),
 }
 
-/// A normal log entry.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EntryNormal {
-    /// The contents of this entry.
-    pub data: (),
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EntryFromRequest<D> {
+    pub request_id: Option<RequestId>,
+    pub entry: Arc<Entry<D>>,
 }
