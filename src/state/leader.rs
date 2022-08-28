@@ -12,7 +12,7 @@ pub struct LeaderState {
 impl LeaderState {
     pub fn is_up_to_date<D>(
         &self,
-        common: &CommonState,
+        common: &CommonState<D>,
         node_id: NodeId,
         output: &Output<D>,
     ) -> bool {

@@ -7,7 +7,7 @@ use crate::{
 
 use super::config::Config;
 
-pub struct CommonState {
+pub struct CommonState<D> {
     pub this_id: NodeId,
     pub config: Config,
     pub leader_commit_index: LogIndex,
@@ -15,9 +15,10 @@ pub struct CommonState {
     // Best guess at current leader, may not be accurate...
     pub leader_id: Option<NodeId>,
     pub election_timeout: Option<Timestamp>,
+    pub buffered_messages: Vec<Message<D>>,
 }
 
-impl CommonState {
+impl<D> CommonState<D> {
     pub fn new(this_id: NodeId, config: Config) -> Self {
         Self {
             this_id,
@@ -26,6 +27,7 @@ impl CommonState {
             committed_index: LogIndex::ZERO,
             leader_id: None,
             election_timeout: None,
+            buffered_messages: Vec::new(),
         }
     }
     pub fn mark_not_leader(&mut self) {
@@ -33,7 +35,7 @@ impl CommonState {
             self.leader_id = None;
         }
     }
-    pub fn schedule_election_timeout<D>(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
+    pub fn schedule_election_timeout(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
         let election_timeout = timestamp
             + Duration(thread_rng().gen_range(
                 self.config.min_election_timeout.0..=self.config.max_election_timeout.0,
@@ -49,12 +51,7 @@ impl CommonState {
         }
     }
 
-    pub fn send_message<D>(
-        &self,
-        to_id: NodeId,
-        output: &mut Output<D>,
-        payload: MessagePayload<D>,
-    ) {
+    pub fn send_message(&self, to_id: NodeId, output: &mut Output<D>, payload: MessagePayload<D>) {
         output.add_message(Message {
             from_id: self.this_id,
             to_id,

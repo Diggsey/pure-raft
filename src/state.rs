@@ -34,9 +34,10 @@ pub mod config;
 mod leader;
 mod replication;
 mod role;
+mod working;
 
-pub struct State {
-    common: CommonState,
+pub struct State<D> {
+    common: CommonState<D>,
     role: Role,
 }
 
@@ -45,14 +46,14 @@ pub enum Error {
     DatabaseMismatch,
 }
 
-impl State {
+impl<D> State<D> {
     pub fn new(this_id: NodeId, config: Config) -> Self {
         Self {
             common: CommonState::new(this_id, config),
             role: Role::Learner,
         }
     }
-    pub fn handle<D>(&mut self, input: Input<D>) -> Output<D> {
+    pub fn handle(&mut self, input: Input<D>) -> Output<D> {
         let mut output = Output::default();
         output.persistent_state = input.persistent_state;
         match input.event {
@@ -78,7 +79,7 @@ impl State {
         output
     }
 
-    fn acknowledge_term<D>(
+    fn acknowledge_term(
         &mut self,
         term: Term,
         is_from_leader: bool,
@@ -98,7 +99,7 @@ impl State {
             }
         }
     }
-    fn acknowledge_leader<D>(
+    fn acknowledge_leader(
         &mut self,
         leader_id: NodeId,
         timestamp: Timestamp,
@@ -109,7 +110,7 @@ impl State {
             self.become_follower(timestamp, output);
         }
     }
-    fn become_follower<D>(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
+    fn become_follower(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
         self.role = Role::Follower;
         self.common.mark_not_leader();
         self.common.schedule_election_timeout(timestamp, output);
@@ -119,7 +120,7 @@ impl State {
         self.common.mark_not_leader();
         self.common.election_timeout = None;
     }
-    fn become_applicant<D>(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
+    fn become_applicant(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
         let current_membership = output.persistent_state.current_membership.clone();
         let mut election_state = ElectionState::new(current_membership.clone());
 
@@ -151,7 +152,7 @@ impl State {
         }
         output.schedule_tick(timestamp);
     }
-    fn become_candidate<D>(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
+    fn become_candidate(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
         output.persistent_state.current_term.inc();
         output.persistent_state.voted_for = Some(self.common.this_id);
 
@@ -186,7 +187,7 @@ impl State {
         }
         output.schedule_tick(timestamp);
     }
-    fn become_leader<D>(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
+    fn become_leader(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
         self.role = Role::Leader(LeaderState::default());
         self.common.leader_id = Some(self.common.this_id);
         self.common.leader_commit_index = self.common.committed_index;
@@ -197,7 +198,7 @@ impl State {
             .expect("Infallible");
         output.schedule_tick(timestamp);
     }
-    fn handle_append_entries_request<D>(
+    fn handle_append_entries_request(
         &mut self,
         from_id: NodeId,
         mut payload: AppendEntriesRequest<D>,
@@ -341,7 +342,7 @@ impl State {
             .send_message(from_id, output, MessagePayload::AppendEntriesResponse(resp));
         Ok(())
     }
-    fn handle_append_entries_response<D>(
+    fn handle_append_entries_response(
         &mut self,
         from_id: NodeId,
         payload: AppendEntriesResponse,
@@ -399,7 +400,7 @@ impl State {
         }
     }
 
-    fn handle_vote_request<D>(
+    fn handle_vote_request(
         &mut self,
         from_id: NodeId,
         payload: VoteRequest,
@@ -431,7 +432,7 @@ impl State {
         Ok(())
     }
 
-    fn handle_vote_response<D>(
+    fn handle_vote_response(
         &mut self,
         from_id: NodeId,
         payload: VoteResponse,
@@ -452,7 +453,7 @@ impl State {
         Ok(())
     }
 
-    fn handle_pre_vote_request<D>(
+    fn handle_pre_vote_request(
         &mut self,
         from_id: NodeId,
         payload: PreVoteRequest,
@@ -480,7 +481,7 @@ impl State {
         Ok(())
     }
 
-    fn handle_pre_vote_response<D>(
+    fn handle_pre_vote_response(
         &mut self,
         from_id: NodeId,
         payload: PreVoteResponse,
@@ -501,7 +502,7 @@ impl State {
         Ok(())
     }
 
-    fn handle_message<D>(
+    fn handle_message(
         &mut self,
         message: Message<D>,
         timestamp: Timestamp,
@@ -530,7 +531,7 @@ impl State {
             MessagePayload::InstallSnapshotResponse(_) => todo!(),
         }
     }
-    fn handle_client_request<D>(
+    fn handle_client_request(
         &mut self,
         client_request: ClientRequest,
         timestamp: Timestamp,
@@ -549,7 +550,7 @@ impl State {
             }
         }
     }
-    fn internal_request<D>(
+    fn internal_request(
         &mut self,
         payload: EntryPayload<D>,
         request_id: Option<RequestId>,
@@ -584,7 +585,7 @@ impl State {
             Err(RequestError::NotLeader)
         }
     }
-    fn bootstrap_cluster<D>(
+    fn bootstrap_cluster(
         &mut self,
         request_id: Option<RequestId>,
         payload: BootstrapRequest,
@@ -617,7 +618,7 @@ impl State {
             output,
         )
     }
-    fn set_members<D>(
+    fn set_members(
         &mut self,
         request_id: Option<RequestId>,
         payload: SetMembersRequest,
@@ -727,7 +728,7 @@ impl State {
             output,
         )
     }
-    fn set_learners<D>(
+    fn set_learners(
         &mut self,
         request_id: Option<RequestId>,
         payload: SetLearnersRequest,
@@ -770,7 +771,7 @@ impl State {
             output,
         )
     }
-    fn update_role_from_membership<D>(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
+    fn update_role_from_membership(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
         let applied_learner = output
             .persistent_state
             .last_membership_applied
@@ -795,7 +796,7 @@ impl State {
             _ => {}
         }
     }
-    fn advance<D>(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
+    fn advance(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
         output.persistent_state.desired_log_entries.clear();
 
         // First, try to advance commit index
