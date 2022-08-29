@@ -15,9 +15,10 @@ pub use io::{
         InstallSnapshotResponse, Message, MessagePayload, PreVoteRequest, PreVoteResponse,
         VoteRequest, VoteResponse,
     },
-    Event, Input, Output,
+    Action, ApplyLogAction, Event, ExtendLogAction, FailedRequest, Input, LoadLogAction,
+    LoadedLogEvent, Output, TruncateLogAction,
 };
-pub use membership::Membership;
+pub use membership::{Membership, MembershipType};
 pub use state::State;
 pub use types::{DatabaseId, Duration, LogIndex, NodeId, RequestId, Term, Timestamp};
 

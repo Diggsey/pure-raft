@@ -79,12 +79,21 @@ impl<'a, D> OverlayState<'a, D> {
         self.common
             .unapplied_membership_changes
             .split_off(&(self.truncate_log_to + 1));
+
+        // Force truncated entries to be unloaded
+        self.common
+            .requested_log_entries
+            .split_off(&(truncate_log_to + 1));
+        self.common
+            .loaded_log_entries
+            .split_off(&(truncate_log_to + 1));
     }
 
     pub fn extend_log(&mut self, entries: impl IntoIterator<Item = EntryFromRequest<D>>) {
         let offset = self.append_log_entries.len();
         let from_index = self.common.last_log_index();
         self.append_log_entries.extend(entries);
+        let count = self.append_log_entries.len() - offset;
         self.common.unapplied_log_terms.extend(
             self.append_log_entries[offset..]
                 .iter()
@@ -102,6 +111,18 @@ impl<'a, D> OverlayState<'a, D> {
                     }
                 }),
         );
+
+        // Preload new entries, on the basis that we'll likely be sending them to peers
+        self.common
+            .requested_log_entries
+            .extend((0..count).map(|idx| from_index + idx as u64 + 1));
+        self.common.loaded_log_entries.extend(
+            self.append_log_entries[offset..]
+                .iter()
+                .enumerate()
+                .map(|(idx, entry)| (from_index + idx as u64 + 1, entry.entry.clone())),
+        );
+
         // If we are the leader, we might be able to immediately commit these entries
         self.changed_match_index = true;
     }

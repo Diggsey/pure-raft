@@ -185,7 +185,7 @@ impl<'a, D> WorkingState<'a, D> {
                         .replication_state
                         .entry(node_id)
                         .or_insert(ReplicationState {
-                            send_after_index: self.overlay.common.last_log_index(),
+                            send_after_index: self.original.last_log_index,
                             match_index: LogIndex::ZERO,
                             retry_at: None,
                             in_flight_request: false,
@@ -211,17 +211,26 @@ impl<'a, D> WorkingState<'a, D> {
 
                     // Try to satisfy the request using log entries already in the cache
                     let mut entries = Vec::new();
-                    let mut prev_log_index = LogIndex::ZERO;
+                    let prev_log_index = replication_state.send_after_index;
                     let mut prev_log_term = Term(0);
                     for i in 0..=num_to_send {
                         let log_index = replication_state.send_after_index + i;
                         if let Some(entry) = self.overlay.common.loaded_log_entries.get(&log_index)
                         {
                             if i == 0 {
-                                prev_log_index = log_index;
                                 prev_log_term = entry.term;
                             } else {
                                 entries.push(entry.clone());
+                            }
+                        } else if i == 0 && log_index >= self.overlay.common.last_applied_log_index
+                        {
+                            if log_index > self.overlay.common.last_applied_log_index {
+                                prev_log_term = self.overlay.common.unapplied_log_terms[(log_index
+                                    - self.overlay.common.last_applied_log_index
+                                    - 1)
+                                    as usize];
+                            } else {
+                                prev_log_term = self.overlay.common.last_applied_log_term;
                             }
                         } else {
                             replication_state.waiting_on_storage = true;
