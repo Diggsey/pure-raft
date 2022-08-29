@@ -5,15 +5,15 @@ use serde::{Deserialize, Serialize};
 use crate::{DatabaseId, NodeId, RequestId};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ClientRequest {
+pub struct ClientRequest<D> {
     pub request_id: Option<RequestId>,
-    pub payload: ClientRequestPayload,
+    pub payload: ClientRequestPayload<D>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum ClientRequestPayload {
+pub enum ClientRequestPayload<D> {
     Bootstrap(BootstrapRequest),
-    Application,
+    Application(D),
     SetMembers(SetMembersRequest),
     SetLearners(SetLearnersRequest),
 }

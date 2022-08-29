@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::{io::Output, NodeId};
+use crate::NodeId;
 
-use super::{common::CommonState, replication::ReplicationState};
+use super::{overlay::OverlayState, replication::ReplicationState};
 
 #[derive(Default)]
 pub struct LeaderState {
@@ -10,17 +10,12 @@ pub struct LeaderState {
 }
 
 impl LeaderState {
-    pub fn is_up_to_date<D>(
-        &self,
-        common: &CommonState<D>,
-        node_id: NodeId,
-        output: &Output<D>,
-    ) -> bool {
-        if common.this_id == node_id {
+    pub fn is_up_to_date<D>(&self, overlay: &OverlayState<D>, node_id: NodeId) -> bool {
+        if overlay.common.this_id == node_id {
             true
         } else if let Some(replication_state) = self.replication_state.get(&node_id) {
-            replication_state.match_index + common.config.batch_size
-                >= output.persistent_state.last_log_index()
+            replication_state.match_index + overlay.config.batch_size
+                >= overlay.common.last_log_index()
         } else {
             false
         }

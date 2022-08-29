@@ -1,33 +1,57 @@
-use rand::{thread_rng, Rng};
-
-use crate::{
-    io::{messages::MessagePayload, Output},
-    Duration, LogIndex, Message, NodeId, Timestamp,
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    mem,
+    sync::Arc,
 };
 
-use super::config::Config;
+use crate::{
+    io::persistent_state::{HardState, InitialState},
+    Entry, LogIndex, Membership, NodeId, Term, Timestamp,
+};
 
 pub struct CommonState<D> {
     pub this_id: NodeId,
-    pub config: Config,
+    pub hard_state: HardState,
+    pub last_applied_log_index: LogIndex,
+    pub last_applied_log_term: Term,
+    pub last_applied_membership: Membership,
+    pub unapplied_log_terms: VecDeque<Term>,
+    pub unapplied_membership_changes: BTreeMap<LogIndex, Membership>,
+
     pub leader_commit_index: LogIndex,
-    pub committed_index: LogIndex,
     // Best guess at current leader, may not be accurate...
     pub leader_id: Option<NodeId>,
     pub election_timeout: Option<Timestamp>,
-    pub buffered_messages: Vec<Message<D>>,
+
+    pub requested_log_entries: BTreeSet<LogIndex>,
+    pub loaded_log_entries: BTreeMap<LogIndex, Arc<Entry<D>>>,
 }
 
 impl<D> CommonState<D> {
-    pub fn new(this_id: NodeId, config: Config) -> Self {
+    pub fn new(this_id: NodeId, initial_state: InitialState) -> Self {
+        let (last_applied_log_index, last_applied_log_term, last_applied_membership) =
+            if let Some(snapshot) = initial_state.initial_snapshot {
+                (
+                    snapshot.last_log_index,
+                    snapshot.last_log_term,
+                    snapshot.last_membership,
+                )
+            } else {
+                Default::default()
+            };
         Self {
             this_id,
-            config,
+            hard_state: initial_state.hard_state,
+            last_applied_log_index,
+            last_applied_log_term,
+            last_applied_membership,
+            unapplied_log_terms: initial_state.log_terms,
+            unapplied_membership_changes: initial_state.membership_changes,
             leader_commit_index: LogIndex::ZERO,
-            committed_index: LogIndex::ZERO,
             leader_id: None,
             election_timeout: None,
-            buffered_messages: Vec::new(),
+            requested_log_entries: BTreeSet::new(),
+            loaded_log_entries: BTreeMap::new(),
         }
     }
     pub fn mark_not_leader(&mut self) {
@@ -35,27 +59,54 @@ impl<D> CommonState<D> {
             self.leader_id = None;
         }
     }
-    pub fn schedule_election_timeout(&mut self, timestamp: Timestamp, output: &mut Output<D>) {
-        let election_timeout = timestamp
-            + Duration(thread_rng().gen_range(
-                self.config.min_election_timeout.0..=self.config.max_election_timeout.0,
-            ));
-        self.election_timeout = Some(election_timeout);
-        output.schedule_tick(election_timeout);
-    }
-    pub fn election_timeout_elapsed(&self, timestamp: Timestamp) -> bool {
-        if let Some(election_timeout) = self.election_timeout {
-            election_timeout <= timestamp
-        } else {
-            false
-        }
+    pub fn last_log_index(&self) -> LogIndex {
+        self.last_applied_log_index + (self.unapplied_log_terms.len() as u64)
     }
 
-    pub fn send_message(&self, to_id: NodeId, output: &mut Output<D>, payload: MessagePayload<D>) {
-        output.add_message(Message {
-            from_id: self.this_id,
-            to_id,
-            payload,
-        });
+    pub fn last_log_term(&self) -> Term {
+        self.unapplied_log_terms
+            .back()
+            .copied()
+            .unwrap_or(self.last_applied_log_term)
+    }
+
+    pub fn current_membership(&self) -> &Membership {
+        self.unapplied_membership_changes
+            .values()
+            .next_back()
+            .unwrap_or(&self.last_applied_membership)
+    }
+
+    pub fn is_up_to_date(&self, last_log_term: Term, last_log_index: LogIndex) -> bool {
+        last_log_term > self.last_log_term()
+            || (last_log_term == self.last_log_term() && last_log_index >= self.last_log_index())
+    }
+
+    pub fn apply_up_to(&mut self, apply_up_to: LogIndex) {
+        let count = (apply_up_to - self.last_applied_log_index) as usize;
+        if count == 0 {
+            return;
+        }
+
+        // First advance our applied index
+        self.last_applied_log_index = apply_up_to;
+
+        // Next, chop off the "unapplied log terms" which have now been applied, and use
+        // the last one as our new "last applied log term".
+        self.last_applied_log_term = self
+            .unapplied_log_terms
+            .drain(0..count)
+            .next_back()
+            .expect("Iterator to not be empty");
+
+        // Finally, chop off the "unapplied membership changes" which have now been applied,
+        // and use the last one as our new "last applied membership".
+        let mut tmp = self
+            .unapplied_membership_changes
+            .split_off(&(self.last_applied_log_index + 1));
+        mem::swap(&mut tmp, &mut self.unapplied_membership_changes);
+        if let Some((_, m)) = tmp.into_iter().next_back() {
+            self.last_applied_membership = m;
+        }
     }
 }

@@ -1,6 +1,4 @@
-use crate::election_state::ElectionState;
-
-use super::leader::LeaderState;
+use super::{election::ElectionState, leader::LeaderState};
 
 pub enum Role {
     Learner,

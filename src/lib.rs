@@ -1,4 +1,3 @@
-mod election_state;
 mod entry;
 mod io;
 mod membership;
@@ -12,7 +11,7 @@ pub use io::{
         InstallSnapshotResponse, Message, MessagePayload, PreVoteRequest, PreVoteResponse,
         VoteRequest, VoteResponse,
     },
-    persistent_state::PersistentState,
+    persistent_state::HardState,
     Event, Input, Output,
 };
 pub use membership::Membership;
