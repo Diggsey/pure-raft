@@ -1,4 +1,8 @@
-use std::{cmp, collections::BTreeSet, sync::Arc};
+use std::{
+    cmp::{self, Ordering},
+    collections::BTreeSet,
+    sync::Arc,
+};
 
 use crate::{
     io::{
@@ -8,11 +12,12 @@ use crate::{
         },
         errors::{BootstrapError, RequestError, SetLearnersError, SetMembersError},
         messages::ConflictOpt,
-        FailedRequest,
+        Action, ApplyLogAction, ExtendLogAction, FailedRequest, LoadLogAction, TruncateLogAction,
     },
     AppendEntriesRequest, AppendEntriesResponse, Entry, EntryFromRequest, EntryPayload, Event,
     HardState, LogIndex, Membership, MembershipChangeCondition, Message, MessagePayload, NodeId,
-    PreVoteRequest, PreVoteResponse, RequestId, State, Term, Timestamp, VoteRequest, VoteResponse,
+    Output, PreVoteRequest, PreVoteResponse, RequestId, State, Term, Timestamp, VoteRequest,
+    VoteResponse,
 };
 
 use super::{
@@ -47,6 +52,7 @@ impl<'a, D> WorkingState<'a, D> {
                 committed_index,
                 messages: Vec::new(),
                 failed_requests: Vec::new(),
+                changed_match_index: false,
             },
             role: &mut state.role,
             original: OriginalState {
@@ -114,15 +120,6 @@ impl<'a, D> WorkingState<'a, D> {
         }
     }
     fn advance(&mut self) {
-        // First, try to advance commit index
-        self.overlay.committed_index = cmp::max(
-            self.overlay.committed_index,
-            cmp::min(
-                self.overlay.common.leader_commit_index,
-                self.overlay.common.last_log_index(),
-            ),
-        );
-
         // Update role in case of membership changes
         self.update_role_from_membership();
 
@@ -141,6 +138,40 @@ impl<'a, D> WorkingState<'a, D> {
 
         // Execute leader logic
         if let Role::Leader(leader_state) = self.role {
+            // Check if we can advance commit index
+            if self.overlay.changed_match_index {
+                // Compute the median match index for each membership group. This is the latest log
+                // entry we could possibly commit if all other criteria are met.
+                let majority_match_index = leader_state.compute_median_match_index(&self.overlay);
+
+                // We can't commit entries that we don't have on the leader
+                let mut candidate_commit_index =
+                    cmp::min(majority_match_index, self.overlay.common.last_log_index());
+
+                // Walk backwards looking for an entry from the current term that we
+                // can commit.
+                while candidate_commit_index > self.overlay.committed_index {
+                    let offset =
+                        candidate_commit_index - self.overlay.common.last_applied_log_index - 1;
+                    match self.overlay.common.unapplied_log_terms[offset as usize]
+                        .cmp(&self.overlay.common.hard_state.current_term)
+                    {
+                        // If the current candidate's term is less than the current term, then
+                        // we can give up early, as we won't find one that's equal.
+                        Ordering::Less => break,
+                        // If we find an entry that has the correct term, then advance our
+                        // commit index to that entry.
+                        Ordering::Equal => {
+                            self.overlay.committed_index = candidate_commit_index;
+                            break;
+                        }
+                        // There shouldn't be any entries from a future term if we are the leader.
+                        Ordering::Greater => {}
+                    };
+                    candidate_commit_index -= 1;
+                }
+            }
+
             let membership = self.overlay.common.current_membership();
 
             // Synchronize replication state with current membership
@@ -336,7 +367,6 @@ impl<'a, D> WorkingState<'a, D> {
     fn become_leader(&mut self) {
         *self.role = Role::Leader(LeaderState::default());
         self.acknowledge_leader(self.overlay.common.this_id);
-        self.overlay.common.leader_commit_index = self.overlay.committed_index;
         self.overlay.common.election_timeout = None;
 
         // Request should be infallible because we disable rate limiting and we know we are the leader
@@ -449,8 +479,7 @@ impl<'a, D> WorkingState<'a, D> {
                 if !payload.entries.is_empty() {
                     self.overlay.truncate_log_to(payload.prev_log_index);
                     self.overlay
-                        .append_log_entries
-                        .extend(payload.entries.into_iter().map(|entry| EntryFromRequest {
+                        .extend_log(payload.entries.into_iter().map(|entry| EntryFromRequest {
                             request_id: None,
                             entry,
                         }));
@@ -458,8 +487,9 @@ impl<'a, D> WorkingState<'a, D> {
 
                 // Advance the leader commit index. This may go ahead of our log entries,
                 // but we won't advance our own commit index until we have those log entries.
-                if payload.leader_commit > self.overlay.common.leader_commit_index {
-                    self.overlay.common.leader_commit_index = payload.leader_commit;
+                if payload.leader_commit > self.overlay.committed_index {
+                    self.overlay.committed_index =
+                        cmp::min(payload.leader_commit, self.overlay.common.last_log_index());
                 }
             }
 
@@ -481,12 +511,10 @@ impl<'a, D> WorkingState<'a, D> {
         self.acknowledge_term(payload.term, false);
 
         if let Role::Leader(leader_state) = self.role {
-            let mut changed_match_index = false;
-
             if let Some(replication_state) = leader_state.replication_state.get_mut(&from_id) {
                 replication_state.in_flight_request = false;
                 if let Some(match_index) = payload.match_index {
-                    changed_match_index = true;
+                    self.overlay.changed_match_index = true;
                     replication_state.match_index = match_index;
                     replication_state.send_after_index = match_index;
                 } else if let Some(conflict) = payload.conflict_opt {
@@ -495,20 +523,6 @@ impl<'a, D> WorkingState<'a, D> {
                     replication_state.send_after_index -= 1;
                 } else {
                     // Can't go back any further, just retry
-                }
-            }
-
-            if changed_match_index {
-                let mut match_indexes: Vec<_> = leader_state
-                    .replication_state
-                    .values()
-                    .map(|rs| rs.match_index)
-                    .collect();
-                match_indexes.push(self.overlay.common.last_log_index());
-                match_indexes.sort();
-                let new_commit_index = match_indexes[match_indexes.len() / 2];
-                if new_commit_index > self.overlay.common.leader_commit_index {
-                    self.overlay.common.leader_commit_index = new_commit_index;
                 }
             }
         }
@@ -679,13 +693,13 @@ impl<'a, D> WorkingState<'a, D> {
                 || (self.overlay.common.unapplied_log_terms.len() as u64)
                     < self.overlay.config.max_unapplied_entries
             {
-                self.overlay.append_log_entries.push(EntryFromRequest {
+                self.overlay.extend_log([EntryFromRequest {
                     request_id,
                     entry: Arc::new(Entry {
                         term: self.overlay.common.hard_state.current_term,
                         payload,
                     }),
-                });
+                }]);
                 Ok(())
             } else {
                 // Too many in-flight requests already
@@ -860,5 +874,125 @@ impl<'a, D> WorkingState<'a, D> {
         membership.set_learners(payload.learner_ids);
 
         self.internal_request(EntryPayload::MembershipChange(membership), request_id, true)
+    }
+}
+
+impl<D> From<WorkingState<'_, D>> for Output<D> {
+    fn from(working: WorkingState<'_, D>) -> Self {
+        let mut actions = Vec::new();
+
+        // Detect log truncation
+        if working.overlay.truncate_log_to < working.original.last_log_index {
+            actions.push(Action::TruncateLog(TruncateLogAction {
+                last_log_index: working.overlay.truncate_log_to,
+            }));
+        }
+
+        // Detect log extension
+        if !working.overlay.append_log_entries.is_empty() {
+            actions.push(Action::ExtendLog(ExtendLogAction {
+                entries: working.overlay.append_log_entries,
+            }));
+        }
+
+        // Detect hard state change
+        if working.overlay.common.hard_state != working.original.hard_state {
+            actions.push(Action::SaveState(working.overlay.common.hard_state.clone()));
+        }
+
+        // Detect sent messages
+        if !working.overlay.messages.is_empty() {
+            actions.extend(
+                working
+                    .overlay
+                    .messages
+                    .into_iter()
+                    .map(Action::SendMessage),
+            );
+        }
+
+        // Detect failed requests
+        if !working.overlay.failed_requests.is_empty() {
+            actions.extend(
+                working
+                    .overlay
+                    .failed_requests
+                    .into_iter()
+                    .map(Action::FailedRequest),
+            );
+        }
+
+        // Detect log entries to be applied
+        if working.overlay.committed_index > working.overlay.common.last_applied_log_index {
+            working
+                .overlay
+                .common
+                .apply_up_to(working.overlay.committed_index);
+            actions.push(Action::ApplyLog(ApplyLogAction {
+                up_to_log_index: working.overlay.common.last_applied_log_index,
+            }));
+        }
+
+        // Detect log entries to be loaded
+        let log_entries_to_request: BTreeSet<_> = working
+            .overlay
+            .desired_log_entries
+            .difference(&working.overlay.common.requested_log_entries)
+            .copied()
+            .collect();
+        if !log_entries_to_request.is_empty() {
+            working
+                .overlay
+                .common
+                .requested_log_entries
+                .extend(log_entries_to_request.iter().copied());
+            actions.push(Action::LoadLog(LoadLogAction {
+                desired_entries: log_entries_to_request,
+            }));
+        }
+
+        // Free no-longer-required log entries
+        let log_entries_to_free: BTreeSet<_> = working
+            .overlay
+            .common
+            .requested_log_entries
+            .difference(&working.overlay.desired_log_entries)
+            .copied()
+            .collect();
+        if !log_entries_to_free.is_empty() {
+            for log_index in log_entries_to_free {
+                working
+                    .overlay
+                    .common
+                    .requested_log_entries
+                    .remove(&log_index);
+                working.overlay.common.loaded_log_entries.remove(&log_index);
+            }
+        }
+
+        // Determine when the state machine should be ticked if no other events happen
+        let mut next_tick = None;
+        let mut schedule_tick = |maybe_timestamp| {
+            if let Some(timestamp) = maybe_timestamp {
+                if let Some(prev_timestamp) = next_tick {
+                    if timestamp < prev_timestamp {
+                        next_tick = Some(timestamp);
+                    }
+                } else {
+                    next_tick = Some(timestamp);
+                }
+            }
+        };
+
+        schedule_tick(working.overlay.common.election_timeout);
+        if let Role::Leader(leader_state) = working.role {
+            for replication_state in leader_state.replication_state.values() {
+                if !replication_state.waiting_on_storage {
+                    schedule_tick(replication_state.retry_at);
+                }
+            }
+        }
+
+        Self { actions, next_tick }
     }
 }

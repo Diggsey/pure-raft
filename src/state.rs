@@ -1,23 +1,23 @@
 use crate::{
-    io::{persistent_state::InitialState, Input, Output},
+    io::{initial_state::InitialState, Input, Output},
     types::NodeId,
+    Config,
 };
 
-use self::{common::CommonState, config::Config, role::Role, working::WorkingState};
+use self::{common::CommonState, role::Role, working::WorkingState};
 
 mod common;
-pub mod config;
 mod election;
 mod leader;
-pub mod overlay;
+mod overlay;
 mod replication;
-pub mod role;
-pub mod working;
+mod role;
+mod working;
 
 pub struct State<D> {
-    pub config: Config,
-    pub common: CommonState<D>,
-    pub role: Role,
+    config: Config,
+    common: CommonState<D>,
+    role: Role,
 }
 
 #[derive(Debug)]

@@ -5,21 +5,25 @@ use serde::{Deserialize, Serialize};
 use crate::NodeId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum RequestError {
     NotLeader,
     Busy,
+    Conflict,
     Bootstrap(BootstrapError),
     SetMembers(SetMembersError),
     SetLearners(SetLearnersError),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum BootstrapError {
     ClusterAlreadyInitialized,
     ThisNodeMustBeVoter,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum SetMembersError {
     AlreadyChanging,
     InvalidMembers,
@@ -32,6 +36,7 @@ pub enum SetMembersError {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum SetLearnersError {
     AlreadyChanging,
     ExistingMembers { member_ids: BTreeSet<NodeId> },

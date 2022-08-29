@@ -1,12 +1,7 @@
-use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
-    sync::Arc,
-};
-
+use maplit::btreeset;
 use pure_raft::{
-    AppendEntriesRequest, Config, DatabaseId, Duration, Entry, EntryPayload, Event, Input,
-    LogIndex, Membership, MembershipChangeCondition, Message, MessagePayload, NodeId,
-    PersistentState, State, Term, Timestamp,
+    BootstrapRequest, ClientRequest, ClientRequestPayload, Config, DatabaseId, Duration, Event,
+    InitialState, Input, MembershipChangeCondition, NodeId, RequestId, State, Timestamp,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -26,40 +21,20 @@ fn smoke() {
         max_unapplied_entries: 20,
         membership_change_condition: MembershipChangeCondition::NewUpToDate,
     };
-    let membership = Membership::bootstrap([NodeId(0), NodeId(1), NodeId(2)], []);
-    let input = Input::<Data> {
+    let initial_state = InitialState::default();
+
+    let mut state = State::<()>::new(NodeId(1), initial_state, config);
+    let output = state.handle(Input {
         timestamp: Timestamp(0),
-        persistent_state: PersistentState {
-            database_id: DATABASE_ID,
-            current_term: Term(1),
-            voted_for: None,
-            current_membership: membership.clone(),
-            last_log_applied: LogIndex(1),
-            last_term_applied: Term(1),
-            last_membership_applied: membership.clone(),
-            unapplied_log_terms: VecDeque::new(),
-            pending_log_changes: vec![],
-            cached_log_entries: BTreeMap::new(),
-            desired_log_entries: BTreeSet::new(),
-        },
-        event: Event::Message(Message {
-            from_id: NodeId(0),
-            to_id: NodeId(1),
-            payload: MessagePayload::AppendEntriesRequest(AppendEntriesRequest {
+        event: Event::ClientRequest(ClientRequest {
+            request_id: Some(RequestId(1)),
+            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
                 database_id: DATABASE_ID,
-                term: Term(0),
-                prev_log_index: LogIndex(0),
-                prev_log_term: Term(0),
-                entries: vec![Arc::new(Entry {
-                    term: Term(0),
-                    payload: EntryPayload::Blank,
-                })],
-                leader_commit: LogIndex(0),
+                voter_ids: btreeset![NodeId(1)],
+                learner_ids: btreeset![],
             }),
         }),
-    };
-    let mut state = State::new(NodeId(1), config);
-    let output = state.handle(input);
+    });
     dbg!(output);
     panic!();
 }

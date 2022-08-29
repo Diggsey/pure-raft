@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    io::persistent_state::{HardState, InitialState},
+    io::initial_state::{HardState, InitialState},
     Entry, LogIndex, Membership, NodeId, Term, Timestamp,
 };
 
@@ -18,7 +18,6 @@ pub struct CommonState<D> {
     pub unapplied_log_terms: VecDeque<Term>,
     pub unapplied_membership_changes: BTreeMap<LogIndex, Membership>,
 
-    pub leader_commit_index: LogIndex,
     // Best guess at current leader, may not be accurate...
     pub leader_id: Option<NodeId>,
     pub election_timeout: Option<Timestamp>,
@@ -47,7 +46,6 @@ impl<D> CommonState<D> {
             last_applied_membership,
             unapplied_log_terms: initial_state.log_terms,
             unapplied_membership_changes: initial_state.membership_changes,
-            leader_commit_index: LogIndex::ZERO,
             leader_id: None,
             election_timeout: None,
             requested_log_entries: BTreeSet::new(),

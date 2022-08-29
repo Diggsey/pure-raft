@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use rand::{thread_rng, Rng};
 
 use crate::{
-    io::FailedRequest, Config, Duration, EntryFromRequest, EntryPayload, LogIndex, Message,
-    MessagePayload, NodeId, Timestamp,
+    io::{errors::RequestError, FailedRequest},
+    Config, Duration, EntryFromRequest, EntryPayload, LogIndex, Message, MessagePayload, NodeId,
+    Timestamp,
 };
 
 use super::common::CommonState;
@@ -24,6 +25,7 @@ pub struct OverlayState<'a, D> {
     pub committed_index: LogIndex,
     pub messages: Vec<Message<D>>,
     pub failed_requests: Vec<FailedRequest>,
+    pub changed_match_index: bool,
 }
 
 impl<'a, D> OverlayState<'a, D> {
@@ -51,13 +53,24 @@ impl<'a, D> OverlayState<'a, D> {
         self.common.election_timeout = Some(election_timeout);
     }
 
+    fn truncate_log_inner(&mut self, size: usize) {
+        self.failed_requests.extend(
+            self.append_log_entries
+                .drain(size..)
+                .filter_map(|entry| entry.request_id)
+                .map(|request_id| FailedRequest {
+                    request_id,
+                    error: RequestError::Conflict,
+                }),
+        );
+    }
+
     pub fn truncate_log_to(&mut self, truncate_log_to: LogIndex) {
         if truncate_log_to > self.truncate_log_to {
-            self.append_log_entries
-                .truncate((truncate_log_to - self.truncate_log_to) as usize);
+            self.truncate_log_inner((truncate_log_to - self.truncate_log_to) as usize);
         } else {
+            self.truncate_log_inner(0);
             self.truncate_log_to = truncate_log_to;
-            self.append_log_entries.clear();
         }
         let new_unapplied_log_size = self.truncate_log_to - self.common.last_applied_log_index;
         self.common
@@ -89,5 +102,7 @@ impl<'a, D> OverlayState<'a, D> {
                     }
                 }),
         );
+        // If we are the leader, we might be able to immediately commit these entries
+        self.changed_match_index = true;
     }
 }
