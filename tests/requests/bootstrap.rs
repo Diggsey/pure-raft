@@ -3,16 +3,14 @@ use std::sync::Arc;
 use maplit::{btreemap, btreeset};
 use pretty_assertions::assert_eq;
 use pure_raft::{
-    Action, AppendEntriesRequest, ApplyLogAction, BootstrapRequest, ClientRequest,
+    Action, AppendEntriesRequest, ApplyLogAction, BootstrapError, BootstrapRequest, ClientRequest,
     ClientRequestPayload, DatabaseId, Entry, EntryFromRequest, EntryPayload, Event,
-    ExtendLogAction, HardState, InitialState, Input, LogIndex, Membership, MembershipType, Message,
-    MessagePayload, NodeId, Output, RequestId, State, Term, Timestamp,
+    ExtendLogAction, FailedRequest, HardState, InitialState, Input, LogIndex, Membership,
+    MembershipType, Message, MessagePayload, NodeId, Output, RequestError, RequestId, State, Term,
+    Timestamp,
 };
 
 use crate::default_config;
-
-#[derive(Debug, Copy, Clone)]
-struct Data(u32);
 
 const DATABASE_ID: DatabaseId = DatabaseId(1);
 
@@ -288,6 +286,69 @@ fn three_node() {
                 }),
             }),
         ],
+    };
+
+    assert_eq!(actual_output, expected_output);
+}
+
+#[test]
+fn bad_non_voter() {
+    let mut state = State::<()>::new(NodeId(1), InitialState::default(), default_config());
+    let actual_output = state.handle(Input {
+        timestamp: Timestamp(0),
+        event: Event::ClientRequest(ClientRequest {
+            request_id: Some(RequestId(1)),
+            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
+                database_id: DATABASE_ID,
+                voter_ids: btreeset![NodeId(2)],
+                learner_ids: btreeset![NodeId(1)],
+            }),
+        }),
+    });
+
+    let expected_output = Output {
+        next_tick: None,
+        actions: vec![Action::FailedRequest(FailedRequest {
+            request_id: RequestId(1),
+            error: RequestError::Bootstrap(BootstrapError::ThisNodeMustBeVoter),
+        })],
+    };
+
+    assert_eq!(actual_output, expected_output);
+}
+
+#[test]
+fn bad_double_bootstrap() {
+    let mut state = State::<()>::new(NodeId(1), InitialState::default(), default_config());
+    state.handle(Input {
+        timestamp: Timestamp(0),
+        event: Event::ClientRequest(ClientRequest {
+            request_id: Some(RequestId(1)),
+            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
+                database_id: DATABASE_ID,
+                voter_ids: btreeset![NodeId(1)],
+                learner_ids: btreeset![],
+            }),
+        }),
+    });
+    let actual_output = state.handle(Input {
+        timestamp: Timestamp(0),
+        event: Event::ClientRequest(ClientRequest {
+            request_id: Some(RequestId(2)),
+            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
+                database_id: DATABASE_ID,
+                voter_ids: btreeset![NodeId(1)],
+                learner_ids: btreeset![],
+            }),
+        }),
+    });
+
+    let expected_output = Output {
+        next_tick: None,
+        actions: vec![Action::FailedRequest(FailedRequest {
+            request_id: RequestId(2),
+            error: RequestError::Bootstrap(BootstrapError::ClusterAlreadyInitialized),
+        })],
     };
 
     assert_eq!(actual_output, expected_output);

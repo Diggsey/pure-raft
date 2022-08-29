@@ -13,4 +13,5 @@ fn default_config() -> Config {
     }
 }
 
+pub mod append_entries;
 pub mod bootstrap;

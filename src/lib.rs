@@ -9,6 +9,7 @@ pub use config::{Config, MembershipChangeCondition};
 pub use entry::{Entry, EntryFromRequest, EntryPayload};
 pub use io::{
     client_requests::{BootstrapRequest, ClientRequest, ClientRequestPayload},
+    errors::{BootstrapError, RequestError, SetLearnersError, SetMembersError},
     initial_state::{HardState, InitialSnapshot, InitialState},
     messages::{
         AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,

@@ -1,5 +1,5 @@
 [workspace]
-members = ["pure-raft-playground"]
+members = ["pure-raft-playground", "xtask"]
 
 [package]
 name = "pure-raft"
@@ -15,3 +15,6 @@ rand = "0.8.5"
 [dev-dependencies]
 maplit = "1.0.2"
 pretty_assertions = "1.2.1"
+
+[profile.coverage]
+inherits = "test"
