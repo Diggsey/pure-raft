@@ -429,7 +429,7 @@ impl<'a, D> WorkingState<'a, D> {
             } else if payload.prev_log_index < self.overlay.common.last_log_index() {
                 // We need to check that the entries match our uncommitted entries
                 let unapplied_offset =
-                    (payload.prev_log_index - self.overlay.committed_index) as usize;
+                    (payload.prev_log_index - self.overlay.common.last_applied_log_index) as usize;
 
                 let expected_log_term = if unapplied_offset == 0 {
                     self.overlay.common.last_applied_log_term
@@ -494,7 +494,7 @@ impl<'a, D> WorkingState<'a, D> {
                         }));
                 }
 
-                // Advance the leader commit index. This may go ahead of our log entries,
+                // Advance our commit index. The leader commit index may go ahead of our log entries,
                 // but we won't advance our own commit index until we have those log entries.
                 if payload.leader_commit > self.overlay.committed_index {
                     self.overlay.committed_index =
