@@ -426,7 +426,7 @@ impl<'a, D> WorkingState<'a, D> {
                 // There were no entries more recent than our commit index, so we know they all match
                 assert!(payload.entries.is_empty());
                 (true, None)
-            } else if payload.prev_log_index < self.overlay.common.last_log_index() {
+            } else if payload.prev_log_index <= self.overlay.common.last_log_index() {
                 // We need to check that the entries match our uncommitted entries
                 let unapplied_offset =
                     (payload.prev_log_index - self.overlay.common.last_applied_log_index) as usize;
@@ -576,6 +576,12 @@ impl<'a, D> WorkingState<'a, D> {
                 vote_granted,
             }),
         );
+
+        // If we are a follower or applicant and we granted the vote, then reset
+        // our election timeout.
+        if vote_granted && matches!(self.role, Role::Follower | Role::Applicant(_)) {
+            self.become_follower();
+        }
 
         Ok(())
     }

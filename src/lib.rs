@@ -12,7 +12,7 @@ pub use io::{
     errors::{BootstrapError, RequestError, SetLearnersError, SetMembersError},
     initial_state::{HardState, InitialSnapshot, InitialState},
     messages::{
-        AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
+        AppendEntriesRequest, AppendEntriesResponse, ConflictOpt, InstallSnapshotRequest,
         InstallSnapshotResponse, Message, MessagePayload, PreVoteRequest, PreVoteResponse,
         VoteRequest, VoteResponse,
     },
