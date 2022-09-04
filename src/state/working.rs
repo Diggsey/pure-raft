@@ -345,12 +345,15 @@ impl<'a, D> WorkingState<'a, D> {
 
         // Request a pre-vote from all voting nodes
         for (&node_id, &membership_type) in &current_membership.nodes {
-            // Don't bother sending vote requests to learners
-            if membership_type.is_voter_next || membership_type.is_voter_prev {
-                self.overlay.send_message(
-                    node_id,
-                    MessagePayload::PreVoteRequest(pre_vote_request.clone()),
-                )
+            // Don't send messages to ourself
+            if node_id != self.overlay.common.this_id {
+                // Don't bother sending vote requests to learners
+                if membership_type.is_voter_next || membership_type.is_voter_prev {
+                    self.overlay.send_message(
+                        node_id,
+                        MessagePayload::PreVoteRequest(pre_vote_request.clone()),
+                    )
+                }
             }
         }
     }
@@ -378,10 +381,13 @@ impl<'a, D> WorkingState<'a, D> {
 
         // Request a pre-vote from all voting nodes
         for (&node_id, &membership_type) in &current_membership.nodes {
-            // Don't bother sending vote requests to learners
-            if membership_type.is_voter_next || membership_type.is_voter_prev {
-                self.overlay
-                    .send_message(node_id, MessagePayload::VoteRequest(vote_request.clone()))
+            // Don't send messages to ourself
+            if node_id != self.overlay.common.this_id {
+                // Don't bother sending vote requests to learners
+                if membership_type.is_voter_next || membership_type.is_voter_prev {
+                    self.overlay
+                        .send_message(node_id, MessagePayload::VoteRequest(vote_request.clone()))
+                }
             }
         }
     }
@@ -588,10 +594,13 @@ impl<'a, D> WorkingState<'a, D> {
             }),
         );
 
-        // If we are a follower or applicant and we granted the vote, then reset
-        // our election timeout.
-        if vote_granted && matches!(self.role, Role::Follower | Role::Applicant(_)) {
-            self.become_follower();
+        if vote_granted {
+            self.overlay.common.hard_state.voted_for = Some(from_id);
+            // If we are a follower or applicant and we granted the vote, then reset
+            // our election timeout.
+            if matches!(self.role, Role::Follower | Role::Applicant(_)) {
+                self.become_follower();
+            }
         }
 
         Ok(())

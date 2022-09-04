@@ -1,14 +1,11 @@
-use std::sync::Arc;
-
 use maplit::btreemap;
 use pretty_assertions::assert_eq;
 use pure_raft::{
-    Action, AppendEntriesRequest, Entry, EntryPayload, Event, InitialState, Input, LoadedLogEvent,
-    LogIndex, Membership, MembershipType, Message, MessagePayload, NodeId, Output, State, Term,
-    Timestamp,
+    Action, AppendEntriesRequest, Event, InitialState, Input, LoadedLogEvent, LogIndex, Message,
+    MessagePayload, NodeId, Output, State, Term, Timestamp,
 };
 
-use crate::{default_config, two_node_bootstrap, DATABASE_ID};
+use crate::{default_config, two_node_bootstrap, two_node_entries, DATABASE_ID};
 
 #[test]
 fn two_node_append_timeout() {
@@ -19,21 +16,7 @@ fn two_node_append_timeout() {
         event: Event::Tick,
     });
 
-    let expected_log_entries = vec![
-        Arc::new(Entry {
-            term: Term(0),
-            payload: EntryPayload::Blank,
-        }),
-        Arc::new(Entry {
-            term: Term(0),
-            payload: EntryPayload::MembershipChange(Membership {
-                nodes: btreemap! {
-                    NodeId(1) => MembershipType::VOTER,
-                    NodeId(2) => MembershipType::VOTER,
-                },
-            }),
-        }),
-    ];
+    let expected_log_entries = two_node_entries();
 
     let actual_output = state.handle(Input {
         timestamp: Timestamp(1010),
