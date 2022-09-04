@@ -4,30 +4,20 @@ use maplit::{btreemap, btreeset};
 use pretty_assertions::assert_eq;
 use pure_raft::{
     Action, AppendEntriesRequest, ApplyLogAction, BootstrapError, BootstrapRequest, ClientRequest,
-    ClientRequestPayload, DatabaseId, Entry, EntryFromRequest, EntryPayload, Event,
-    ExtendLogAction, FailedRequest, HardState, InitialState, Input, LogIndex, Membership,
-    MembershipType, Message, MessagePayload, NodeId, Output, RequestError, RequestId, State, Term,
-    Timestamp,
+    ClientRequestPayload, Entry, EntryFromRequest, EntryPayload, Event, ExtendLogAction,
+    FailedRequest, HardState, InitialState, Input, LogIndex, Membership, MembershipType, Message,
+    MessagePayload, NodeId, Output, RequestError, RequestId, State, Term, Timestamp,
 };
 
-use crate::default_config;
-
-const DATABASE_ID: DatabaseId = DatabaseId(1);
+use crate::{
+    default_config, single_node_bootstrap, single_node_with_learner_bootstrap,
+    three_node_bootstrap, two_node_bootstrap, DATABASE_ID,
+};
 
 #[test]
 fn single_node() {
     let mut state = State::<()>::new(NodeId(1), InitialState::default(), default_config());
-    let actual_output = state.handle(Input {
-        timestamp: Timestamp(0),
-        event: Event::ClientRequest(ClientRequest {
-            request_id: Some(RequestId(1)),
-            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
-                database_id: DATABASE_ID,
-                voter_ids: btreeset![NodeId(1)],
-                learner_ids: btreeset![],
-            }),
-        }),
-    });
+    let actual_output = state.handle(single_node_bootstrap());
 
     let expected_output = Output {
         next_tick: None,
@@ -71,17 +61,7 @@ fn single_node() {
 #[test]
 fn two_node() {
     let mut state = State::<()>::new(NodeId(1), InitialState::default(), default_config());
-    let actual_output = state.handle(Input {
-        timestamp: Timestamp(0),
-        event: Event::ClientRequest(ClientRequest {
-            request_id: Some(RequestId(1)),
-            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
-                database_id: DATABASE_ID,
-                voter_ids: btreeset![NodeId(1), NodeId(2)],
-                learner_ids: btreeset![],
-            }),
-        }),
-    });
+    let actual_output = state.handle(two_node_bootstrap());
 
     let expected_log_entries = vec![
         Arc::new(Entry {
@@ -140,17 +120,7 @@ fn two_node() {
 #[test]
 fn single_node_with_learner() {
     let mut state = State::<()>::new(NodeId(1), InitialState::default(), default_config());
-    let actual_output = state.handle(Input {
-        timestamp: Timestamp(0),
-        event: Event::ClientRequest(ClientRequest {
-            request_id: Some(RequestId(1)),
-            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
-                database_id: DATABASE_ID,
-                voter_ids: btreeset![NodeId(1)],
-                learner_ids: btreeset![NodeId(2)],
-            }),
-        }),
-    });
+    let actual_output = state.handle(single_node_with_learner_bootstrap());
 
     let expected_log_entries = vec![
         Arc::new(Entry {
@@ -212,17 +182,7 @@ fn single_node_with_learner() {
 #[test]
 fn three_node() {
     let mut state = State::<()>::new(NodeId(1), InitialState::default(), default_config());
-    let actual_output = state.handle(Input {
-        timestamp: Timestamp(0),
-        event: Event::ClientRequest(ClientRequest {
-            request_id: Some(RequestId(1)),
-            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
-                database_id: DATABASE_ID,
-                voter_ids: btreeset![NodeId(1), NodeId(2), NodeId(3)],
-                learner_ids: btreeset![],
-            }),
-        }),
-    });
+    let actual_output = state.handle(three_node_bootstrap());
 
     let expected_log_entries = vec![
         Arc::new(Entry {
@@ -320,17 +280,7 @@ fn bad_non_voter() {
 #[test]
 fn bad_double_bootstrap() {
     let mut state = State::<()>::new(NodeId(1), InitialState::default(), default_config());
-    state.handle(Input {
-        timestamp: Timestamp(0),
-        event: Event::ClientRequest(ClientRequest {
-            request_id: Some(RequestId(1)),
-            payload: ClientRequestPayload::Bootstrap(BootstrapRequest {
-                database_id: DATABASE_ID,
-                voter_ids: btreeset![NodeId(1)],
-                learner_ids: btreeset![],
-            }),
-        }),
-    });
+    state.handle(single_node_bootstrap());
     let actual_output = state.handle(Input {
         timestamp: Timestamp(0),
         event: Event::ClientRequest(ClientRequest {

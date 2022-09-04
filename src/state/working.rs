@@ -209,29 +209,37 @@ impl<'a, D> WorkingState<'a, D> {
                 {
                     let num_to_send = cmp::min(unsent_entries, self.overlay.config.batch_size);
 
+                    let prev_log_index = replication_state.send_after_index;
+
+                    // Try to get the term of the previous log entry
+                    let maybe_prev_log_term =
+                        if prev_log_index >= self.overlay.common.last_applied_log_index {
+                            Some(
+                                if prev_log_index == self.overlay.common.last_applied_log_index {
+                                    self.overlay.common.last_applied_log_term
+                                } else {
+                                    self.overlay.common.unapplied_log_terms[(prev_log_index
+                                        - self.overlay.common.last_applied_log_index
+                                        - 1)
+                                        as usize]
+                                },
+                            )
+                        } else if let Some(entry) =
+                            self.overlay.common.loaded_log_entries.get(&prev_log_index)
+                        {
+                            Some(entry.term)
+                        } else {
+                            replication_state.waiting_on_storage = true;
+                            None
+                        };
+
                     // Try to satisfy the request using log entries already in the cache
                     let mut entries = Vec::new();
-                    let prev_log_index = replication_state.send_after_index;
-                    let mut prev_log_term = Term(0);
-                    for i in 0..=num_to_send {
-                        let log_index = replication_state.send_after_index + i;
+                    for i in 0..num_to_send {
+                        let log_index = prev_log_index + i + 1;
                         if let Some(entry) = self.overlay.common.loaded_log_entries.get(&log_index)
                         {
-                            if i == 0 {
-                                prev_log_term = entry.term;
-                            } else {
-                                entries.push(entry.clone());
-                            }
-                        } else if i == 0 && log_index >= self.overlay.common.last_applied_log_index
-                        {
-                            if log_index > self.overlay.common.last_applied_log_index {
-                                prev_log_term = self.overlay.common.unapplied_log_terms[(log_index
-                                    - self.overlay.common.last_applied_log_index
-                                    - 1)
-                                    as usize];
-                            } else {
-                                prev_log_term = self.overlay.common.last_applied_log_term;
-                            }
+                            entries.push(entry.clone());
                         } else {
                             replication_state.waiting_on_storage = true;
                             break;
@@ -246,7 +254,8 @@ impl<'a, D> WorkingState<'a, D> {
                                 database_id: self.overlay.common.hard_state.database_id,
                                 term: self.overlay.common.hard_state.current_term,
                                 prev_log_index,
-                                prev_log_term,
+                                prev_log_term: maybe_prev_log_term
+                                    .expect("To be set if not waiting on storage"),
                                 entries,
                                 leader_commit: self.overlay.committed_index,
                             }),
@@ -257,10 +266,13 @@ impl<'a, D> WorkingState<'a, D> {
                     } else {
                         // Otherwise, we were missing an entry, so populate our desired set of
                         // log entries.
-                        for i in 0..=num_to_send {
+                        if maybe_prev_log_term.is_none() {
+                            self.overlay.desired_log_entries.insert(prev_log_index);
+                        }
+                        for i in 0..num_to_send {
                             self.overlay
                                 .desired_log_entries
-                                .insert(replication_state.send_after_index + i);
+                                .insert(replication_state.send_after_index + i + 1);
                         }
                     }
                 }
@@ -528,10 +540,9 @@ impl<'a, D> WorkingState<'a, D> {
                     replication_state.send_after_index = match_index;
                 } else if let Some(conflict) = payload.conflict_opt {
                     replication_state.send_after_index = conflict.index;
-                } else if replication_state.send_after_index > LogIndex::ZERO {
-                    replication_state.send_after_index -= 1;
                 } else {
-                    // Can't go back any further, just retry
+                    // This can only happen if the corresponding "append entries" requst
+                    // was from a previous term. In that case, ignore it.
                 }
             }
         }

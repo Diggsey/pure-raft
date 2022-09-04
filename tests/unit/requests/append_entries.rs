@@ -3,15 +3,13 @@ use std::sync::Arc;
 use maplit::btreemap;
 use pretty_assertions::assert_eq;
 use pure_raft::{
-    Action, AppendEntriesRequest, AppendEntriesResponse, ApplyLogAction, ConflictOpt, DatabaseId,
-    Duration, Entry, EntryFromRequest, EntryPayload, Event, ExtendLogAction, HardState,
-    InitialState, Input, LogIndex, Membership, MembershipType, Message, MessagePayload, NodeId,
-    State, Term, Timestamp, TruncateLogAction,
+    Action, AppendEntriesRequest, AppendEntriesResponse, ApplyLogAction, ConflictOpt, Duration,
+    Entry, EntryFromRequest, EntryPayload, Event, ExtendLogAction, HardState, InitialState, Input,
+    LogIndex, Membership, MembershipType, Message, MessagePayload, NodeId, State, Term, Timestamp,
+    TruncateLogAction,
 };
 
-use crate::default_config;
-
-const DATABASE_ID: DatabaseId = DatabaseId(1);
+use crate::{default_config, DATABASE_ID};
 
 #[test]
 fn two_node() {
