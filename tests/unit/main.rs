@@ -3,22 +3,12 @@ use std::sync::Arc;
 use maplit::{btreemap, btreeset};
 use pure_raft::{
     AppendEntriesRequest, BootstrapRequest, ClientRequest, ClientRequestPayload, Config,
-    DatabaseId, Duration, Entry, EntryPayload, Event, Input, LogIndex, Membership,
-    MembershipChangeCondition, MembershipType, Message, MessagePayload, NodeId, RequestId, Term,
-    Timestamp,
+    DatabaseId, Entry, EntryPayload, Event, Input, LogIndex, Membership, MembershipType, Message,
+    MessagePayload, NodeId, RequestId, Term, Timestamp,
 };
 
 fn default_config() -> Config {
-    Config {
-        pre_vote: true,
-        leader_stickiness: true,
-        heartbeat_interval: Duration(1000),
-        min_election_timeout: Duration(2000),
-        max_election_timeout: Duration(3000),
-        batch_size: 10,
-        max_unapplied_entries: 20,
-        membership_change_condition: MembershipChangeCondition::NewUpToDate,
-    }
+    Config::default()
 }
 
 const DATABASE_ID: DatabaseId = DatabaseId(1);
