@@ -7,7 +7,7 @@ use crate::{membership::Membership, types::Term, RequestId};
 pub trait AppData: Clone + Debug {}
 
 /// A Raft log entry.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Entry<D> {
     /// This entry's term.
     pub term: Term,
@@ -26,7 +26,7 @@ impl<D> Entry<D> {
 }
 
 /// Log entry payload variants.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum EntryPayload<D> {
     /// An empty payload committed by a new cluster leader.
     Blank,

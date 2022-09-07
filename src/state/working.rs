@@ -43,7 +43,7 @@ impl<'a, D> WorkingState<'a, D> {
         let last_log_index = state.common.last_log_index();
         Self {
             overlay: OverlayState {
-                config: &state.config,
+                config: &mut state.config,
                 common: &mut state.common,
                 timestamp,
                 desired_log_entries: Default::default(),
@@ -76,7 +76,8 @@ impl<'a, D> WorkingState<'a, D> {
             }
             Event::ReceivedMessage(message) => {
                 if let Err(e) = self.handle_message(message) {
-                    eprintln!("{:?}", e);
+                    log::warn!("{:?}", e);
+                    panic!();
                 }
             }
             Event::ClientRequest(client_request) => {
@@ -212,7 +213,10 @@ impl<'a, D> WorkingState<'a, D> {
                     let prev_log_index = replication_state.send_after_index;
 
                     // Try to get the term of the previous log entry
+                    let mut loaded_prev_log_term = false;
                     let maybe_prev_log_term =
+                        // First check if the log entry has not yet been applied - in that case, we can get
+                        // the log term from our "last applied term" or "unapplied log terms" array.
                         if prev_log_index >= self.overlay.common.last_applied_log_index {
                             Some(
                                 if prev_log_index == self.overlay.common.last_applied_log_index {
@@ -224,10 +228,18 @@ impl<'a, D> WorkingState<'a, D> {
                                         as usize]
                                 },
                             )
+                        // Next, check if the log entry is the base entry we were initialized with.
+                        // If that's the case, we can directly return the base log term. We want to
+                        // avoid trying to load the entry in this case because it will not be stored.
+                        } else if prev_log_index == self.overlay.common.base_log_index {
+                            Some(self.overlay.common.base_log_term)
+                        // Finally, check if the entry is already loaded.
                         } else if let Some(entry) =
                             self.overlay.common.loaded_log_entries.get(&prev_log_index)
                         {
+                            loaded_prev_log_term = true;
                             Some(entry.term)
+                        // Otherwise, we need to wait for it to be loaded.
                         } else {
                             replication_state.waiting_on_storage = true;
                             None
@@ -266,7 +278,7 @@ impl<'a, D> WorkingState<'a, D> {
                     } else {
                         // Otherwise, we were missing an entry, so populate our desired set of
                         // log entries.
-                        if maybe_prev_log_term.is_none() {
+                        if maybe_prev_log_term.is_none() || loaded_prev_log_term {
                             self.overlay.desired_log_entries.insert(prev_log_index);
                         }
                         for i in 0..num_to_send {
@@ -916,6 +928,11 @@ impl<D> From<WorkingState<'_, D>> for Output<D> {
     fn from(working: WorkingState<'_, D>) -> Self {
         let mut actions = Vec::new();
 
+        // Detect hard state change
+        if working.overlay.common.hard_state != working.original.hard_state {
+            actions.push(Action::SaveState(working.overlay.common.hard_state.clone()));
+        }
+
         // Detect log truncation
         if working.overlay.truncate_log_to < working.original.last_log_index {
             actions.push(Action::TruncateLog(TruncateLogAction {
@@ -928,11 +945,6 @@ impl<D> From<WorkingState<'_, D>> for Output<D> {
             actions.push(Action::ExtendLog(ExtendLogAction {
                 entries: working.overlay.append_log_entries,
             }));
-        }
-
-        // Detect hard state change
-        if working.overlay.common.hard_state != working.original.hard_state {
-            actions.push(Action::SaveState(working.overlay.common.hard_state.clone()));
         }
 
         // Detect sent messages

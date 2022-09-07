@@ -24,6 +24,11 @@ fn two_node() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(0),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -35,11 +40,6 @@ fn two_node() {
                     entry: log_entries[1].clone(),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(0),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -66,6 +66,11 @@ fn single_node_with_learner() {
     assert_eq!(actual_output.next_tick, None);
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(0),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -77,11 +82,6 @@ fn single_node_with_learner() {
                     entry: log_entries[1].clone(),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(0),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -123,6 +123,11 @@ fn three_node_old_term() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(1),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -138,11 +143,6 @@ fn three_node_old_term() {
                     entry: log_entries[2].clone(),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(1),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -210,6 +210,11 @@ fn three_node_overlap() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(0),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -221,11 +226,6 @@ fn three_node_overlap() {
                     entry: log_entries[1].clone(),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(0),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -263,16 +263,16 @@ fn three_node_overlap() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(1),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![EntryFromRequest {
                 request_id: None,
                 entry: log_entries[2].clone(),
             }],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(1),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -313,6 +313,11 @@ fn three_node_conflict() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(0),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -331,11 +336,6 @@ fn three_node_conflict() {
                     }),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(0),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -373,6 +373,11 @@ fn three_node_conflict() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(1),
+            voted_for: None,
+        }),
         Action::TruncateLog(TruncateLogAction {
             last_log_index: LogIndex(2),
         }),
@@ -381,11 +386,6 @@ fn three_node_conflict() {
                 request_id: None,
                 entry: log_entries[2].clone(),
             }],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(1),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -455,6 +455,11 @@ fn two_nodes() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(0),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -466,11 +471,6 @@ fn two_nodes() {
                     entry: log_entries[1].clone(),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(0),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -544,6 +544,11 @@ fn two_nodes_overlap() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(0),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -555,11 +560,6 @@ fn two_nodes_overlap() {
                     entry: log_entries[1].clone(),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(0),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -633,6 +633,11 @@ fn two_nodes_conflict() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(0),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -648,11 +653,6 @@ fn two_nodes_conflict() {
                     entry: log_entries[2].clone(),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(0),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),
@@ -714,6 +714,11 @@ fn two_nodes_future() {
     assert!(actual_output.next_tick <= Some(Timestamp(0) + config.max_election_timeout));
 
     let expected_actions = vec![
+        Action::SaveState(HardState {
+            database_id: DATABASE_ID,
+            current_term: Term(0),
+            voted_for: None,
+        }),
         Action::ExtendLog(ExtendLogAction {
             entries: vec![
                 EntryFromRequest {
@@ -725,11 +730,6 @@ fn two_nodes_future() {
                     entry: log_entries[1].clone(),
                 },
             ],
-        }),
-        Action::SaveState(HardState {
-            database_id: DATABASE_ID,
-            current_term: Term(0),
-            voted_for: None,
         }),
         Action::SendMessage(Message {
             from_id: NodeId(2),

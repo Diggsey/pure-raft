@@ -1,11 +1,11 @@
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use crate::membership::{Membership, MembershipType};
 use crate::types::NodeId;
 
 pub struct ElectionState {
     membership: Membership,
-    votes_received: HashSet<NodeId>,
+    votes_received: BTreeSet<NodeId>,
     pub(crate) has_majority: bool,
 }
 
@@ -33,7 +33,7 @@ impl ElectionState {
     pub(crate) fn new(membership: Membership) -> Self {
         Self {
             membership,
-            votes_received: HashSet::new(),
+            votes_received: BTreeSet::new(),
             has_majority: false,
         }
     }

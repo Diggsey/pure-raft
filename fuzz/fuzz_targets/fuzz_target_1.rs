@@ -1,6 +1,8 @@
 #![no_main]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{btree_map, hash_map::DefaultHasher, BTreeMap, BTreeSet};
+use std::fmt::Debug;
+use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
 
@@ -10,7 +12,7 @@ use scoped_tls_hkt::scoped_thread_local;
 
 use pure_raft::*;
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 struct Data;
 
 struct NodeState {
@@ -47,6 +49,9 @@ impl NodeState {
         self.applied_up_to = LogIndex(0);
         self.next_tick = Some(Timestamp(0));
     }
+    fn is_bootstrapped(&self) -> bool {
+        !self.log_entries.is_empty()
+    }
 }
 
 enum InFlightOp {
@@ -64,12 +69,25 @@ struct MultiNodeState {
     nodes: BTreeMap<NodeId, NodeState>,
     in_flight_ops: BTreeMap<Timestamp, Vec<InFlightOp>>,
     timestamp: Timestamp,
+    initial_count: u64,
+    allow_failures: bool,
+    leaders: BTreeMap<Term, NodeId>,
+    first_committed: BTreeMap<LogIndex, (Arc<Entry<Data>>, Term)>,
 }
 
 const MAX_NODES: u64 = 19;
 const MAX_LATENCY: u64 = 5000;
 
 scoped_thread_local!(static mut INPUT: Unstructured<'static>);
+
+fn log_event(timestamp: Timestamp, node_id: NodeId, name: &str, data: &dyn Debug) {
+    if log::log_enabled!(log::Level::Debug) {
+        eprintln!(
+            "Time {}, Node {}, {}: {:?}",
+            timestamp.0, node_id.0, name, data
+        );
+    }
+}
 
 impl MultiNodeState {
     fn new() -> Self {
@@ -99,10 +117,15 @@ impl MultiNodeState {
             nodes,
             in_flight_ops: BTreeMap::new(),
             timestamp: Timestamp(0),
+            initial_count: 0,
+            allow_failures: false,
+            leaders: BTreeMap::new(),
+            first_committed: BTreeMap::new(),
         }
     }
 
     fn handle(&mut self, node_id: NodeId, event: Event<Data>) -> Result<()> {
+        log_event(self.timestamp, node_id, "Handle", &event);
         let in_flight_ops = {
             let mut node = self.nodes.get_mut(&node_id).unwrap();
             let output = node.state.handle(Input {
@@ -113,13 +136,17 @@ impl MultiNodeState {
             let mut in_flight_ops = Vec::new();
 
             for action in output.actions {
-                if INPUT.with(|input| input.ratio(1, 256))? {
+                if self.allow_failures && INPUT.with(|input| input.ratio(1, 256))? {
                     node.reset(node_id, self.config.clone());
+                    log_event(self.timestamp, node_id, "Reset", &());
                     break;
                 }
+                log_event(self.timestamp, node_id, "Action", &action);
                 match action {
                     Action::TruncateLog(x) => {
                         assert!(x.last_log_index >= node.applied_up_to);
+                        // Check "leader append-only" safety invariant
+                        assert!(!node.state.is_leader());
                         node.log_entries.truncate(x.last_log_index.0 as usize)
                     }
                     Action::ExtendLog(x) => node
@@ -130,16 +157,38 @@ impl MultiNodeState {
                     }
                     Action::SendMessage(message) => {
                         let delay = INPUT.with(|input| input.int_in_range(0..=MAX_LATENCY))?;
-                        if delay != MAX_LATENCY {
+                        if !self.allow_failures || delay != MAX_LATENCY {
                             in_flight_ops.push((
                                 self.timestamp + Duration(delay),
                                 InFlightOp::Message(message),
                             ));
+                        } else {
+                            log_event(self.timestamp, node_id, "Drop", &message);
                         }
                     }
                     Action::FailedRequest(_) => {}
                     Action::ApplyLog(x) => {
                         assert!(x.up_to_log_index > node.applied_up_to);
+
+                        for log_index in node.applied_up_to.0..x.up_to_log_index.0 {
+                            match self.first_committed.entry(LogIndex(log_index) + 1) {
+                                btree_map::Entry::Occupied(x) => {
+                                    let x = x.into_mut();
+                                    // Check "state machine safety" invariant
+                                    assert_eq!(x.0, node.log_entries[log_index as usize]);
+                                    if node.hard_state.current_term < x.1 {
+                                        x.1 = node.hard_state.current_term;
+                                    }
+                                }
+                                btree_map::Entry::Vacant(x) => {
+                                    x.insert((
+                                        node.log_entries[log_index as usize].clone(),
+                                        node.hard_state.current_term,
+                                    ));
+                                }
+                            }
+                        }
+
                         node.applied_up_to = x.up_to_log_index;
                     }
                     Action::LoadLog(x) => {
@@ -171,7 +220,57 @@ impl MultiNodeState {
         Ok(())
     }
 
+    fn is_majority_bootstrapped(&self) -> bool {
+        self.nodes
+            .values()
+            .filter(|node| node.is_bootstrapped())
+            .count() as u64
+            > self.initial_count / 2
+    }
+
+    fn check_election_safety(&mut self) {
+        for (k, v) in &self.nodes {
+            if v.state.is_leader() {
+                let prev = self.leaders.insert(v.hard_state.current_term, *k);
+                assert!(prev.is_none() || prev == Some(*k));
+            }
+        }
+    }
+
+    fn check_log_matching(&self) {
+        let mut hashes = BTreeMap::new();
+        for node in self.nodes.values() {
+            let mut hasher = DefaultHasher::new();
+            for (i, v) in node.log_entries.iter().enumerate() {
+                v.hash(&mut hasher);
+                let hash = hasher.finish();
+                let existing_hash = *hashes.entry((v.term, i)).or_insert(hash);
+                assert_eq!(hash, existing_hash);
+            }
+        }
+    }
+
+    fn check_leader_completeness(&self) {
+        for (log_index, (entry, term)) in &self.first_committed {
+            let leader_ids: BTreeSet<NodeId> =
+                self.leaders.range(term..).map(|(_, v)| *v).collect();
+            for leader_id in &leader_ids {
+                assert_eq!(
+                    &self.nodes[leader_id].log_entries[log_index.0 as usize - 1],
+                    entry
+                );
+            }
+        }
+    }
+
     fn advance(&mut self) -> Result<()> {
+        self.check_election_safety();
+        self.check_log_matching();
+        self.check_leader_completeness();
+
+        if !self.allow_failures {
+            self.allow_failures = self.is_majority_bootstrapped();
+        }
         let mut next_timestamp = Timestamp(u64::MAX);
         for (node_id, node) in &self.nodes {
             if let Some(next_tick) = node.next_tick {
@@ -227,6 +326,8 @@ impl MultiNodeState {
 }
 
 fuzz_target!(|data: &[u8]| {
+    let _ = pretty_env_logger::try_init();
+
     let mut data = Unstructured::new(unsafe {
         // Safety: we are erasing the lifetime of `data` here, replacing
         // it with `'static`. This is sound because we will ensure all
@@ -236,6 +337,7 @@ fuzz_target!(|data: &[u8]| {
     let mut system = MultiNodeState::new();
     let _ = INPUT.set(&mut data, || -> Result<()> {
         let initial_node_count = INPUT.with(|input| input.int_in_range(1..=MAX_NODES))?;
+        system.initial_count = initial_node_count;
         system.handle(
             NodeId(0),
             Event::ClientRequest(ClientRequest {

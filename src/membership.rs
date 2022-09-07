@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::NodeId;
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 pub struct MembershipType {
     pub is_voter_prev: bool,
     pub is_voter_next: bool,
@@ -31,7 +33,7 @@ impl MembershipType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub struct Membership {
     pub nodes: BTreeMap<NodeId, MembershipType>,
 }

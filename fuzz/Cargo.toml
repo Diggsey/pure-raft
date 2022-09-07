@@ -12,6 +12,8 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 scoped-tls-hkt = "0.1.2"
 arbitrary = "1.1.4"
+log = "0.4.17"
+pretty_env_logger = "0.4.0"
 
 [dependencies.pure-raft]
 path = ".."

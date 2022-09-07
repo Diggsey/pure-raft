@@ -1,18 +1,15 @@
 use std::collections::BTreeSet;
 
-use rand::{thread_rng, Rng};
-
 use crate::{
     io::{errors::RequestError, FailedRequest},
-    Config, Duration, EntryFromRequest, EntryPayload, LogIndex, Message, MessagePayload, NodeId,
-    Timestamp,
+    Config, EntryFromRequest, EntryPayload, LogIndex, Message, MessagePayload, NodeId, Timestamp,
 };
 
 use super::common::CommonState;
 
 pub struct OverlayState<'a, D> {
     // Semi-persistent state
-    pub config: &'a Config,
+    pub config: &'a mut Config,
     pub common: &'a mut CommonState<D>,
 
     // The current timestamp
@@ -47,9 +44,9 @@ impl<'a, D> OverlayState<'a, D> {
 
     pub fn schedule_election_timeout(&mut self) {
         let election_timeout = self.timestamp
-            + Duration(thread_rng().gen_range(
-                self.config.min_election_timeout.0..=self.config.max_election_timeout.0,
-            ));
+            + self.config.random_sampler.sample_duration(
+                self.config.min_election_timeout..=self.config.max_election_timeout,
+            );
         self.common.election_timeout = Some(election_timeout);
     }
 

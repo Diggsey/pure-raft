@@ -24,6 +24,8 @@ pub struct CommonState<D> {
 
     pub requested_log_entries: BTreeSet<LogIndex>,
     pub loaded_log_entries: BTreeMap<LogIndex, Arc<Entry<D>>>,
+    pub base_log_index: LogIndex,
+    pub base_log_term: Term,
 }
 
 impl<D> CommonState<D> {
@@ -50,6 +52,8 @@ impl<D> CommonState<D> {
             election_timeout: None,
             requested_log_entries: BTreeSet::new(),
             loaded_log_entries: BTreeMap::new(),
+            base_log_index: last_applied_log_index,
+            base_log_term: last_applied_log_term,
         }
     }
     pub fn mark_not_leader(&mut self) {

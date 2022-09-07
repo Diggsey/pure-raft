@@ -39,4 +39,7 @@ impl<D> State<D> {
 
         working_state.into()
     }
+    pub fn is_leader(&self) -> bool {
+        matches!(self.role, Role::Leader(_))
+    }
 }

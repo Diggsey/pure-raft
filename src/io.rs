@@ -45,9 +45,9 @@ pub struct LoadedLogEvent<D> {
 // Actions will always be returned in this order
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Action<D> {
+    SaveState(HardState),
     TruncateLog(TruncateLogAction),
     ExtendLog(ExtendLogAction<D>),
-    SaveState(HardState),
     SendMessage(Message<D>),
     FailedRequest(FailedRequest),
     ApplyLog(ApplyLogAction),

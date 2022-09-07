@@ -22,6 +22,11 @@ fn single_node() {
     let expected_output = Output {
         next_tick: None,
         actions: vec![
+            Action::SaveState(HardState {
+                database_id: DATABASE_ID,
+                current_term: Term(0),
+                voted_for: Some(NodeId(1)),
+            }),
             Action::ExtendLog(ExtendLogAction {
                 entries: vec![
                     EntryFromRequest {
@@ -43,11 +48,6 @@ fn single_node() {
                         }),
                     },
                 ],
-            }),
-            Action::SaveState(HardState {
-                database_id: DATABASE_ID,
-                current_term: Term(0),
-                voted_for: Some(NodeId(1)),
             }),
             Action::ApplyLog(ApplyLogAction {
                 up_to_log_index: LogIndex(2),
@@ -82,6 +82,11 @@ fn two_node() {
     let expected_output = Output {
         next_tick: Some(Timestamp(1000)),
         actions: vec![
+            Action::SaveState(HardState {
+                database_id: DATABASE_ID,
+                current_term: Term(0),
+                voted_for: Some(NodeId(1)),
+            }),
             Action::ExtendLog(ExtendLogAction {
                 entries: vec![
                     EntryFromRequest {
@@ -93,11 +98,6 @@ fn two_node() {
                         entry: expected_log_entries[1].clone(),
                     },
                 ],
-            }),
-            Action::SaveState(HardState {
-                database_id: DATABASE_ID,
-                current_term: Term(0),
-                voted_for: Some(NodeId(1)),
             }),
             Action::SendMessage(Message {
                 from_id: NodeId(1),
@@ -141,6 +141,11 @@ fn single_node_with_learner() {
     let expected_output = Output {
         next_tick: Some(Timestamp(1000)),
         actions: vec![
+            Action::SaveState(HardState {
+                database_id: DATABASE_ID,
+                current_term: Term(0),
+                voted_for: Some(NodeId(1)),
+            }),
             Action::ExtendLog(ExtendLogAction {
                 entries: vec![
                     EntryFromRequest {
@@ -152,11 +157,6 @@ fn single_node_with_learner() {
                         entry: expected_log_entries[1].clone(),
                     },
                 ],
-            }),
-            Action::SaveState(HardState {
-                database_id: DATABASE_ID,
-                current_term: Term(0),
-                voted_for: Some(NodeId(1)),
             }),
             Action::SendMessage(Message {
                 from_id: NodeId(1),
@@ -204,6 +204,11 @@ fn three_node() {
     let expected_output = Output {
         next_tick: Some(Timestamp(1000)),
         actions: vec![
+            Action::SaveState(HardState {
+                database_id: DATABASE_ID,
+                current_term: Term(0),
+                voted_for: Some(NodeId(1)),
+            }),
             Action::ExtendLog(ExtendLogAction {
                 entries: vec![
                     EntryFromRequest {
@@ -215,11 +220,6 @@ fn three_node() {
                         entry: expected_log_entries[1].clone(),
                     },
                 ],
-            }),
-            Action::SaveState(HardState {
-                database_id: DATABASE_ID,
-                current_term: Term(0),
-                voted_for: Some(NodeId(1)),
             }),
             Action::SendMessage(Message {
                 from_id: NodeId(1),
