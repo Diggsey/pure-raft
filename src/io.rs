@@ -59,14 +59,14 @@ pub struct InstallSnapshotEvent {
 pub enum Action<D> {
     SaveState(HardState),
     TruncateLog(TruncateLogAction),
+    CompactLog(CompactLogAction),
     ExtendLog(ExtendLogAction<D>),
     SendMessage(Message<D>),
     FailedRequest(FailedRequest),
     ApplyLog(ApplyLogAction),
     LoadLog(LoadLogAction),
-    BeginDownloadSnapshot(BeginDownloadSnapshotAction),
     CancelDownloadSnapshot,
-    CompactLog(CompactLogAction),
+    BeginDownloadSnapshot(BeginDownloadSnapshotAction),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
