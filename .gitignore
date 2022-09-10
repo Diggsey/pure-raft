@@ -2,3 +2,5 @@
 /target-wsl
 /Cargo.lock
 /coverage
+/fuzz/coverage
+/fuzz/lcov.info

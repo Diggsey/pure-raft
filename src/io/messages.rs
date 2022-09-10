@@ -100,26 +100,14 @@ pub struct PreVoteResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InstallSnapshotRequest {
-    /// The unique database ID
     pub database_id: DatabaseId,
-    /// The leader's current term.
     pub term: Term,
-    /// The leader's ID. Useful in redirecting clients.
-    pub leader_id: NodeId,
-    /// The snapshot replaces all log entries up through and including this index.
-    pub last_included_index: LogIndex,
-    /// The term of the `last_included_index`.
-    pub last_included_term: Term,
-    /// The byte offset where chunk is positioned in the snapshot file.
-    pub offset: u64,
-    /// The raw Vec<u8> of the snapshot chunk, starting at `offset`.
-    pub data: Vec<u8>,
-    /// Will be `true` if this is the last chunk in the snapshot.
-    pub done: bool,
+    pub last_log_index: LogIndex,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InstallSnapshotResponse {
     /// The receiving node's current term, for leader to update itself.
     pub term: Term,
+    pub match_index: Option<LogIndex>,
 }

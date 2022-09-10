@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     state::Error,
     types::{RequestId, Timestamp},
-    Entry, EntryFromRequest, HardState, LogIndex,
+    DatabaseId, Entry, EntryFromRequest, HardState, InitialSnapshot, LogIndex, NodeId,
 };
 
 use self::{client_requests::ClientRequest, errors::RequestError, messages::Message};
@@ -37,11 +37,21 @@ pub enum Event<D> {
     LoadedLog(LoadedLogEvent<D>),
     ReceivedMessage(Message<D>),
     ClientRequest(ClientRequest<D>),
+    InstallSnapshot(InstallSnapshotEvent),
+    FailedToDownloadSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct LoadedLogEvent<D> {
     pub entries: BTreeMap<LogIndex, Arc<Entry<D>>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct InstallSnapshotEvent {
+    pub snapshot: InitialSnapshot,
+    /// True if this completes a previously requested snapshot
+    /// download.
+    pub was_downloaded: bool,
 }
 
 // Actions will always be returned in this order
@@ -54,6 +64,9 @@ pub enum Action<D> {
     FailedRequest(FailedRequest),
     ApplyLog(ApplyLogAction),
     LoadLog(LoadLogAction),
+    BeginDownloadSnapshot(BeginDownloadSnapshotAction),
+    CancelDownloadSnapshot,
+    CompactLog(CompactLogAction),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -67,6 +80,12 @@ pub struct ExtendLogAction<D> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CompactLogAction {
+    pub snapshot_id: SnapshotId,
+    pub reset_state: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ApplyLogAction {
     pub up_to_log_index: LogIndex,
 }
@@ -74,6 +93,18 @@ pub struct ApplyLogAction {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct LoadLogAction {
     pub desired_entries: BTreeSet<LogIndex>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SnapshotId {
+    pub database_id: DatabaseId,
+    pub last_log_index: LogIndex,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct BeginDownloadSnapshotAction {
+    pub from_id: NodeId,
+    pub snapshot_id: SnapshotId,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

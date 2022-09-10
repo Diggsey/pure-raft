@@ -12,12 +12,13 @@ use crate::{
         },
         errors::{BootstrapError, RequestError, SetLearnersError, SetMembersError},
         messages::ConflictOpt,
-        Action, ApplyLogAction, ExtendLogAction, FailedRequest, LoadLogAction, TruncateLogAction,
+        Action, ApplyLogAction, BeginDownloadSnapshotAction, CompactLogAction, ExtendLogAction,
+        FailedRequest, LoadLogAction, SnapshotId, TruncateLogAction,
     },
     AppendEntriesRequest, AppendEntriesResponse, Entry, EntryFromRequest, EntryPayload, Event,
-    HardState, LogIndex, Membership, MembershipChangeCondition, Message, MessagePayload, NodeId,
-    Output, PreVoteRequest, PreVoteResponse, RequestId, State, Term, Timestamp, VoteRequest,
-    VoteResponse,
+    HardState, InstallSnapshotRequest, InstallSnapshotResponse, LogIndex, Membership,
+    MembershipChangeCondition, Message, MessagePayload, NodeId, Output, PreVoteRequest,
+    PreVoteResponse, RequestId, State, Term, Timestamp, VoteRequest, VoteResponse,
 };
 
 use super::{
@@ -28,6 +29,8 @@ use super::{
 pub struct OriginalState {
     pub hard_state: HardState,
     pub last_log_index: LogIndex,
+    pub base_log_index: LogIndex,
+    pub downloading_snapshot: Option<BeginDownloadSnapshotAction>,
 }
 
 pub struct WorkingState<'a, D> {
@@ -41,6 +44,8 @@ impl<'a, D> WorkingState<'a, D> {
         let committed_index = state.common.last_applied_log_index;
         let hard_state = state.common.hard_state.clone();
         let last_log_index = state.common.last_log_index();
+        let base_log_index = state.common.base_log_index;
+        let downloading_snapshot = state.common.downloading_snapshot.clone();
         Self {
             overlay: OverlayState {
                 config: &mut state.config,
@@ -54,11 +59,14 @@ impl<'a, D> WorkingState<'a, D> {
                 failed_requests: Vec::new(),
                 changed_match_index: false,
                 errors: Vec::new(),
+                reset_to_snapshot: false,
             },
             role: &mut state.role,
             original: OriginalState {
                 hard_state,
                 last_log_index,
+                base_log_index,
+                downloading_snapshot,
             },
         }
     }
@@ -89,6 +97,45 @@ impl<'a, D> WorkingState<'a, D> {
                             .push(FailedRequest { request_id, error });
                     }
                 }
+            }
+            Event::InstallSnapshot(snapshot_event) => {
+                if snapshot_event.was_downloaded {
+                    self.original.downloading_snapshot = None;
+                }
+
+                let snapshot = snapshot_event.snapshot;
+                self.overlay.common.downloading_snapshot = None;
+                self.overlay.common.base_log_index = snapshot.last_log_index;
+                self.overlay.common.base_log_term = snapshot.last_log_term;
+
+                // If snapshot is ahead of our log
+                if snapshot.last_log_index >= self.overlay.common.last_log_index() {
+                    // just reset everything
+                    self.overlay.reset_to_snapshot();
+
+                // Otherwise, if snapshot is in our "unapplied" region
+                } else if snapshot.last_log_index > self.overlay.common.last_applied_log_index {
+                    // Check if snapshot conflicts with our log entries
+                    let unapplied_offset = (snapshot.last_log_index
+                        - self.overlay.common.last_applied_log_index)
+                        as usize;
+                    let expected_term =
+                        self.overlay.common.unapplied_log_terms[unapplied_offset - 1];
+                    // If snapshot does not conflict
+                    if expected_term == snapshot.last_log_term {
+                        // Simply commit up to the snapshot's last log index
+                        self.overlay.committed_index = snapshot.last_log_index;
+                    } else {
+                        // Otherwise, reset everything
+                        self.overlay.reset_to_snapshot();
+                    }
+                } else {
+                    // We are already ahead of the snapshot, nothing to do!
+                }
+            }
+            Event::FailedToDownloadSnapshot => {
+                self.original.downloading_snapshot = None;
+                self.overlay.common.downloading_snapshot = None;
             }
         };
         self.advance();
@@ -197,103 +244,8 @@ impl<'a, D> WorkingState<'a, D> {
 
             // Update followers
             for (&node_id, replication_state) in &mut leader_state.replication_state {
-                replication_state.waiting_on_storage = false;
-
-                // Calculate number of log entries we still need to send to this node
-                let unsent_entries =
-                    self.overlay.common.last_log_index() - replication_state.send_after_index;
-
-                // If the hearbeat timeout is up, or if we have unsent log entries and we don't have an
-                // in-flight request, then we need to send one.
-                if replication_state.should_retry(self.overlay.timestamp)
-                    || (unsent_entries > 0 && !replication_state.in_flight_request)
-                {
-                    let num_to_send = cmp::min(unsent_entries, self.overlay.config.batch_size);
-
-                    let prev_log_index = replication_state.send_after_index;
-
-                    // Try to get the term of the previous log entry
-                    let mut loaded_prev_log_term = false;
-                    let maybe_prev_log_term =
-                        // First check if the log entry has not yet been applied - in that case, we can get
-                        // the log term from our "last applied term" or "unapplied log terms" array.
-                        if prev_log_index >= self.overlay.common.last_applied_log_index {
-                            Some(
-                                if prev_log_index == self.overlay.common.last_applied_log_index {
-                                    self.overlay.common.last_applied_log_term
-                                } else {
-                                    self.overlay.common.unapplied_log_terms[(prev_log_index
-                                        - self.overlay.common.last_applied_log_index
-                                        - 1)
-                                        as usize]
-                                },
-                            )
-                        // Next, check if the log entry is the base entry we were initialized with.
-                        // If that's the case, we can directly return the base log term. We want to
-                        // avoid trying to load the entry in this case because it will not be stored.
-                        } else if prev_log_index == self.overlay.common.base_log_index {
-                            Some(self.overlay.common.base_log_term)
-                        // Finally, check if the entry is already loaded.
-                        } else if let Some(entry) =
-                            self.overlay.common.loaded_log_entries.get(&prev_log_index)
-                        {
-                            loaded_prev_log_term = true;
-                            Some(entry.term)
-                        // Otherwise, we need to wait for it to be loaded.
-                        } else {
-                            replication_state.waiting_on_storage = true;
-                            None
-                        };
-
-                    // Try to satisfy the request using log entries already in the cache
-                    let mut entries = Vec::new();
-                    for i in 0..num_to_send {
-                        let log_index = prev_log_index + i + 1;
-                        if let Some(entry) = self.overlay.common.loaded_log_entries.get(&log_index)
-                        {
-                            entries.push(entry.clone());
-                        } else {
-                            replication_state.waiting_on_storage = true;
-                            break;
-                        }
-                    }
-
-                    if !replication_state.waiting_on_storage {
-                        // Must not indicate a leader commit index ahead of the last entry in
-                        // the request payload.
-                        let leader_commit = self
-                            .overlay
-                            .committed_index
-                            .min(prev_log_index + (entries.len() as u64));
-                        // If all the log entries we needed were present, then send the request
-                        self.overlay.send_message(
-                            node_id,
-                            MessagePayload::AppendEntriesRequest(AppendEntriesRequest {
-                                database_id: self.overlay.common.hard_state.database_id,
-                                term: self.overlay.common.hard_state.current_term,
-                                prev_log_index,
-                                prev_log_term: maybe_prev_log_term
-                                    .expect("To be set if not waiting on storage"),
-                                entries,
-                                leader_commit,
-                            }),
-                        );
-                        replication_state.in_flight_request = true;
-                        replication_state.retry_at =
-                            Some(self.overlay.timestamp + self.overlay.config.heartbeat_interval);
-                    } else {
-                        // Otherwise, we were missing an entry, so populate our desired set of
-                        // log entries.
-                        if maybe_prev_log_term.is_none() || loaded_prev_log_term {
-                            self.overlay.desired_log_entries.insert(prev_log_index);
-                        }
-                        for i in 0..num_to_send {
-                            self.overlay
-                                .desired_log_entries
-                                .insert(replication_state.send_after_index + i + 1);
-                        }
-                    }
-                }
+                self.overlay
+                    .update_replication_state(node_id, replication_state);
             }
 
             // If we applied the first half of a membership change, and there are no further membership changes proposed
@@ -522,6 +474,9 @@ impl<'a, D> WorkingState<'a, D> {
             if success {
                 match_index = Some(payload.prev_log_index + payload.entries.len() as u64);
                 if !payload.entries.is_empty() {
+                    // Cancel any snapshot download if we successfully applied entries
+                    self.overlay.common.downloading_snapshot = None;
+
                     self.overlay.truncate_log_to(payload.prev_log_index);
                     self.overlay
                         .extend_log(payload.entries.into_iter().map(|entry| EntryFromRequest {
@@ -544,6 +499,7 @@ impl<'a, D> WorkingState<'a, D> {
                 conflict_opt,
             }
         };
+
         self.overlay
             .send_message(from_id, MessagePayload::AppendEntriesResponse(resp));
         Ok(())
@@ -572,7 +528,66 @@ impl<'a, D> WorkingState<'a, D> {
         }
         Ok(())
     }
+    fn handle_install_snapshot_request(
+        &mut self,
+        from_id: NodeId,
+        payload: InstallSnapshotRequest,
+    ) -> Result<(), Error> {
+        self.overlay
+            .common
+            .hard_state
+            .acknowledge_database_id(payload.database_id)?;
+        self.acknowledge_term(payload.term, true);
+        let match_index = if payload.term != self.overlay.common.hard_state.current_term {
+            None
+        } else {
+            self.acknowledge_leader(from_id);
 
+            if self.overlay.common.base_log_index >= payload.last_log_index {
+                Some(self.overlay.common.base_log_index)
+            } else {
+                self.overlay.common.downloading_snapshot = Some(BeginDownloadSnapshotAction {
+                    from_id,
+                    snapshot_id: SnapshotId {
+                        database_id: payload.database_id,
+                        last_log_index: payload.last_log_index,
+                    },
+                });
+                None
+            }
+        };
+
+        self.overlay.send_message(
+            from_id,
+            MessagePayload::InstallSnapshotResponse(InstallSnapshotResponse {
+                term: self.overlay.common.hard_state.current_term,
+                match_index,
+            }),
+        );
+        Ok(())
+    }
+
+    fn handle_install_snapshot_response(
+        &mut self,
+        from_id: NodeId,
+        payload: InstallSnapshotResponse,
+    ) -> Result<(), Error> {
+        self.acknowledge_term(payload.term, false);
+
+        if let Role::Leader(leader_state) = self.role {
+            if let Some(replication_state) = leader_state.replication_state.get_mut(&from_id) {
+                replication_state.in_flight_request = false;
+                if let Some(match_index) = payload.match_index {
+                    self.overlay.changed_match_index = true;
+                    replication_state.match_index = match_index;
+                    replication_state.send_after_index = match_index;
+                } else {
+                    // Follower has not finished downloading snapshot
+                }
+            }
+        }
+        Ok(())
+    }
     fn should_betray_leader(&self) -> bool {
         // If leader stickiness is enabled, reject pre-votes unless
         // we haven't heard from the leader in a while.
@@ -710,8 +725,12 @@ impl<'a, D> WorkingState<'a, D> {
             MessagePayload::PreVoteResponse(payload) => {
                 self.handle_pre_vote_response(message.from_id, payload)
             }
-            MessagePayload::InstallSnapshotRequest(_) => todo!(),
-            MessagePayload::InstallSnapshotResponse(_) => todo!(),
+            MessagePayload::InstallSnapshotRequest(payload) => {
+                self.handle_install_snapshot_request(message.from_id, payload)
+            }
+            MessagePayload::InstallSnapshotResponse(payload) => {
+                self.handle_install_snapshot_response(message.from_id, payload)
+            }
         }
     }
     fn require_is_leader(&self) -> Result<(), RequestError> {
@@ -953,6 +972,17 @@ impl<D> From<WorkingState<'_, D>> for Output<D> {
             }));
         }
 
+        // Detect log compaction
+        if working.overlay.common.base_log_index != working.original.base_log_index {
+            actions.push(Action::CompactLog(CompactLogAction {
+                snapshot_id: SnapshotId {
+                    database_id: working.overlay.common.hard_state.database_id,
+                    last_log_index: working.overlay.common.base_log_index,
+                },
+                reset_state: working.overlay.reset_to_snapshot,
+            }))
+        }
+
         // Detect log extension
         if !working.overlay.append_log_entries.is_empty() {
             actions.push(Action::ExtendLog(ExtendLogAction {
@@ -983,7 +1013,9 @@ impl<D> From<WorkingState<'_, D>> for Output<D> {
         }
 
         // Detect log entries to be applied
-        if working.overlay.committed_index > working.overlay.common.last_applied_log_index {
+        if working.overlay.committed_index > working.overlay.common.last_applied_log_index
+            && !working.overlay.reset_to_snapshot
+        {
             working
                 .overlay
                 .common
@@ -1027,6 +1059,16 @@ impl<D> From<WorkingState<'_, D>> for Output<D> {
                     .requested_log_entries
                     .remove(&log_index);
                 working.overlay.common.loaded_log_entries.remove(&log_index);
+            }
+        }
+
+        // Detect snapshot download changes
+        if working.overlay.common.downloading_snapshot != working.original.downloading_snapshot {
+            if working.original.downloading_snapshot.is_some() {
+                actions.push(Action::CancelDownloadSnapshot)
+            }
+            if let Some(download_action) = working.overlay.common.downloading_snapshot.clone() {
+                actions.push(Action::BeginDownloadSnapshot(download_action))
             }
         }
 

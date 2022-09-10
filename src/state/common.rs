@@ -5,7 +5,10 @@ use std::{
 };
 
 use crate::{
-    io::initial_state::{HardState, InitialState},
+    io::{
+        initial_state::{HardState, InitialState},
+        BeginDownloadSnapshotAction,
+    },
     Entry, LogIndex, Membership, NodeId, Term, Timestamp,
 };
 
@@ -26,11 +29,13 @@ pub struct CommonState<D> {
     pub loaded_log_entries: BTreeMap<LogIndex, Arc<Entry<D>>>,
     pub base_log_index: LogIndex,
     pub base_log_term: Term,
+    pub base_membership: Membership,
+    pub downloading_snapshot: Option<BeginDownloadSnapshotAction>,
 }
 
 impl<D> CommonState<D> {
     pub fn new(this_id: NodeId, initial_state: InitialState) -> Self {
-        let (last_applied_log_index, last_applied_log_term, last_applied_membership) =
+        let (base_log_index, base_log_term, base_membership) =
             if let Some(snapshot) = initial_state.initial_snapshot {
                 (
                     snapshot.last_log_index,
@@ -43,17 +48,19 @@ impl<D> CommonState<D> {
         Self {
             this_id,
             hard_state: initial_state.hard_state,
-            last_applied_log_index,
-            last_applied_log_term,
-            last_applied_membership,
+            last_applied_log_index: base_log_index,
+            last_applied_log_term: base_log_term,
+            last_applied_membership: base_membership.clone(),
             unapplied_log_terms: initial_state.log_terms,
             unapplied_membership_changes: initial_state.membership_changes,
             leader_id: None,
             election_timeout: None,
             requested_log_entries: BTreeSet::new(),
             loaded_log_entries: BTreeMap::new(),
-            base_log_index: last_applied_log_index,
-            base_log_term: last_applied_log_term,
+            base_log_index,
+            base_log_term,
+            base_membership,
+            downloading_snapshot: None,
         }
     }
     pub fn mark_not_leader(&mut self) {
