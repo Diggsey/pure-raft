@@ -8,7 +8,10 @@ mod types;
 pub use config::{Config, MembershipChangeCondition, RandomSampler, RandomSamplerFn};
 pub use entry::{Entry, EntryFromRequest, EntryPayload};
 pub use io::{
-    client_requests::{BootstrapRequest, ClientRequest, ClientRequestPayload},
+    client_requests::{
+        BootstrapRequest, ClientRequest, ClientRequestPayload, SetLearnersRequest,
+        SetMembersRequest,
+    },
     errors::{BootstrapError, RequestError, SetLearnersError, SetMembersError},
     initial_state::{HardState, InitialSnapshot, InitialState},
     messages::{

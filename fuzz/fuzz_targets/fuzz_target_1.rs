@@ -13,7 +13,7 @@ use scoped_tls_hkt::scoped_thread_local;
 use pure_raft::*;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-struct Data;
+struct Data(u32);
 
 struct NodeState {
     state: State<Data>,
@@ -132,6 +132,9 @@ impl MultiNodeState {
                 timestamp: self.timestamp,
                 event,
             });
+
+            assert_eq!(output.errors, Vec::new());
+
             node.next_tick = output.next_tick;
             let mut in_flight_ops = Vec::new();
 
@@ -156,8 +159,8 @@ impl MultiNodeState {
                         node.hard_state = hard_state;
                     }
                     Action::SendMessage(message) => {
-                        let delay = INPUT.with(|input| input.int_in_range(0..=MAX_LATENCY))?;
-                        if !self.allow_failures || delay != MAX_LATENCY {
+                        if !self.allow_failures || !INPUT.with(|input| input.ratio(1, 16))? {
+                            let delay = INPUT.with(|input| input.int_in_range(0..=MAX_LATENCY))?;
                             in_flight_ops.push((
                                 self.timestamp + Duration(delay),
                                 InFlightOp::Message(message),
@@ -306,16 +309,38 @@ impl MultiNodeState {
         }
 
         assert!(next_timestamp > self.timestamp);
-        if INPUT.with(|input| input.ratio(1, 256))? {
+        if INPUT.with(|input| input.ratio(1, 64))? {
             self.timestamp = Timestamp(
                 INPUT.with(|input| input.int_in_range(self.timestamp.0..=next_timestamp.0))?,
             );
             let node_id = NodeId(INPUT.with(|input| input.int_in_range(0..=MAX_NODES - 1))?);
+            let payload = match INPUT.with(|input| input.int_in_range(0..=15))? {
+                0 => ClientRequestPayload::SetLearners(SetLearnersRequest {
+                    learner_ids: INPUT.with(|input| {
+                        (0..MAX_NODES)
+                            .map(NodeId)
+                            .filter(|_| input.ratio(1, 3).unwrap_or(false))
+                            .collect()
+                    }),
+                }),
+                1 => ClientRequestPayload::SetMembers(SetMembersRequest {
+                    fault_tolerance: INPUT.with(|input| input.int_in_range(0..=3))?,
+                    member_ids: INPUT.with(|input| {
+                        (0..MAX_NODES)
+                            .map(NodeId)
+                            .filter(|_| input.ratio(1, 3).unwrap_or(false))
+                            .collect()
+                    }),
+                }),
+                _ => {
+                    ClientRequestPayload::Application(Data(INPUT.with(|input| input.arbitrary())?))
+                }
+            };
             return self.handle(
                 node_id,
                 Event::ClientRequest(ClientRequest {
                     request_id: None,
-                    payload: ClientRequestPayload::Application(Data),
+                    payload,
                 }),
             );
         }

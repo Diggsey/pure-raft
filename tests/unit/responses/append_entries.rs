@@ -30,6 +30,7 @@ fn two_node() {
         actions: vec![Action::ApplyLog(ApplyLogAction {
             up_to_log_index: LogIndex(2),
         })],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);
@@ -76,6 +77,7 @@ fn two_node_conflict() {
         actions: vec![Action::LoadLog(LoadLogAction {
             desired_entries: btreeset![LogIndex(1), LogIndex(2), LogIndex(3)],
         })],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);
@@ -122,6 +124,7 @@ fn two_node_ignored() {
         actions: vec![Action::LoadLog(LoadLogAction {
             desired_entries: btreeset![LogIndex(3)],
         })],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);

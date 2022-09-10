@@ -5,7 +5,7 @@ use crate::{
     Config, EntryFromRequest, EntryPayload, LogIndex, Message, MessagePayload, NodeId, Timestamp,
 };
 
-use super::common::CommonState;
+use super::{common::CommonState, Error};
 
 pub struct OverlayState<'a, D> {
     // Semi-persistent state
@@ -23,6 +23,7 @@ pub struct OverlayState<'a, D> {
     pub messages: Vec<Message<D>>,
     pub failed_requests: Vec<FailedRequest>,
     pub changed_match_index: bool,
+    pub errors: Vec<Error>,
 }
 
 impl<'a, D> OverlayState<'a, D> {

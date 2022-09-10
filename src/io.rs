@@ -6,6 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    state::Error,
     types::{RequestId, Timestamp},
     Entry, EntryFromRequest, HardState, LogIndex,
 };
@@ -27,6 +28,7 @@ pub struct Input<D> {
 pub struct Output<D> {
     pub next_tick: Option<Timestamp>,
     pub actions: Vec<Action<D>>,
+    pub errors: Vec<Error>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

@@ -53,6 +53,7 @@ fn single_node() {
                 up_to_log_index: LogIndex(2),
             }),
         ],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);
@@ -112,6 +113,7 @@ fn two_node() {
                 }),
             }),
         ],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);
@@ -174,6 +176,7 @@ fn single_node_with_learner() {
                 up_to_log_index: LogIndex(2),
             }),
         ],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);
@@ -246,6 +249,7 @@ fn three_node() {
                 }),
             }),
         ],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);
@@ -272,6 +276,7 @@ fn bad_non_voter() {
             request_id: RequestId(1),
             error: RequestError::Bootstrap(BootstrapError::ThisNodeMustBeVoter),
         })],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);
@@ -299,6 +304,7 @@ fn bad_double_bootstrap() {
             request_id: RequestId(2),
             error: RequestError::Bootstrap(BootstrapError::ClusterAlreadyInitialized),
         })],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);

@@ -53,6 +53,7 @@ impl<'a, D> WorkingState<'a, D> {
                 messages: Vec::new(),
                 failed_requests: Vec::new(),
                 changed_match_index: false,
+                errors: Vec::new(),
             },
             role: &mut state.role,
             original: OriginalState {
@@ -76,8 +77,7 @@ impl<'a, D> WorkingState<'a, D> {
             }
             Event::ReceivedMessage(message) => {
                 if let Err(e) = self.handle_message(message) {
-                    log::warn!("{:?}", e);
-                    panic!();
+                    self.overlay.errors.push(e);
                 }
             }
             Event::ClientRequest(client_request) => {
@@ -259,6 +259,12 @@ impl<'a, D> WorkingState<'a, D> {
                     }
 
                     if !replication_state.waiting_on_storage {
+                        // Must not indicate a leader commit index ahead of the last entry in
+                        // the request payload.
+                        let leader_commit = self
+                            .overlay
+                            .committed_index
+                            .min(prev_log_index + (entries.len() as u64));
                         // If all the log entries we needed were present, then send the request
                         self.overlay.send_message(
                             node_id,
@@ -269,7 +275,7 @@ impl<'a, D> WorkingState<'a, D> {
                                 prev_log_term: maybe_prev_log_term
                                     .expect("To be set if not waiting on storage"),
                                 entries,
-                                leader_commit: self.overlay.committed_index,
+                                leader_commit,
                             }),
                         );
                         replication_state.in_flight_request = true;
@@ -708,6 +714,13 @@ impl<'a, D> WorkingState<'a, D> {
             MessagePayload::InstallSnapshotResponse(_) => todo!(),
         }
     }
+    fn require_is_leader(&self) -> Result<(), RequestError> {
+        if self.role.is_leader() {
+            Ok(())
+        } else {
+            Err(RequestError::NotLeader)
+        }
+    }
     fn handle_client_request(
         &mut self,
         client_request: ClientRequest<D>,
@@ -735,26 +748,22 @@ impl<'a, D> WorkingState<'a, D> {
         request_id: Option<RequestId>,
         rate_limited: bool,
     ) -> Result<(), RequestError> {
-        if self.role.is_leader() {
-            if !rate_limited
-                || (self.overlay.common.unapplied_log_terms.len() as u64)
-                    < self.overlay.config.max_unapplied_entries
-            {
-                self.overlay.extend_log([EntryFromRequest {
-                    request_id,
-                    entry: Arc::new(Entry {
-                        term: self.overlay.common.hard_state.current_term,
-                        payload,
-                    }),
-                }]);
-                Ok(())
-            } else {
-                // Too many in-flight requests already
-                Err(RequestError::Busy)
-            }
+        self.require_is_leader()?;
+        if !rate_limited
+            || (self.overlay.common.unapplied_log_terms.len() as u64)
+                < self.overlay.config.max_unapplied_entries
+        {
+            self.overlay.extend_log([EntryFromRequest {
+                request_id,
+                entry: Arc::new(Entry {
+                    term: self.overlay.common.hard_state.current_term,
+                    payload,
+                }),
+            }]);
+            Ok(())
         } else {
-            // Only the leader can respond to client requests
-            Err(RequestError::NotLeader)
+            // Too many in-flight requests already
+            Err(RequestError::Busy)
         }
     }
     fn bootstrap_cluster(
@@ -792,6 +801,8 @@ impl<'a, D> WorkingState<'a, D> {
         request_id: Option<RequestId>,
         payload: SetMembersRequest,
     ) -> Result<(), RequestError> {
+        self.require_is_leader()?;
+
         // Check destination state for validity
         if payload.member_ids.is_empty() {
             // Empty cluster is not allowed...
@@ -893,6 +904,8 @@ impl<'a, D> WorkingState<'a, D> {
         request_id: Option<RequestId>,
         payload: SetLearnersRequest,
     ) -> Result<(), RequestError> {
+        self.require_is_leader()?;
+
         let current_membership = self.overlay.common.current_membership();
 
         // For simplicity, don't allow learner changes whilst members are changing
@@ -1040,6 +1053,10 @@ impl<D> From<WorkingState<'_, D>> for Output<D> {
             }
         }
 
-        Self { actions, next_tick }
+        Self {
+            actions,
+            next_tick,
+            errors: working.overlay.errors,
+        }
     }
 }

@@ -161,7 +161,6 @@ dependencies = [
 name = "pure-raft"
 version = "0.1.0"
 dependencies = [
- "log",
  "rand",
  "serde",
 ]

@@ -23,6 +23,7 @@ fn two_node_append_timeout() {
         actions: vec![Action::LoadLog(LoadLogAction {
             desired_entries: btreeset![LogIndex(1), LogIndex(2)],
         })],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);

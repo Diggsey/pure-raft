@@ -42,6 +42,7 @@ fn two_node_append_timeout() {
                 leader_commit: LogIndex(0),
             }),
         })],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);

@@ -60,6 +60,7 @@ fn two_node_conflict() {
                 }),
             }),
         ],
+        errors: Vec::new(),
     };
 
     assert_eq!(actual_output, expected_output);

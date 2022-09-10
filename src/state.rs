@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     io::{initial_state::InitialState, Input, Output},
     types::NodeId,
@@ -20,7 +22,7 @@ pub struct State<D> {
     role: Role,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Error {
     DatabaseMismatch,
 }
