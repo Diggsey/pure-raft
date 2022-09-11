@@ -15,26 +15,47 @@ use pure_raft::*;
 #[derive(Debug, Hash, PartialEq, Eq)]
 struct Data(u32);
 
+#[derive(Clone)]
+struct SnapshotData {
+    log_entries: Vec<Arc<Entry<Data>>>,
+}
+
 struct NodeState {
     state: State<Data>,
     next_tick: Option<Timestamp>,
     log_entries: Vec<Arc<Entry<Data>>>,
     hard_state: HardState,
     applied_up_to: LogIndex,
+    snapshots: BTreeMap<SnapshotId, (Snapshot, SnapshotData)>,
+    current_snapshot: Option<SnapshotId>,
 }
 
 impl NodeState {
     fn reset(&mut self, node_id: NodeId, config: Config) {
+        let initial_snapshot = self
+            .current_snapshot
+            .clone()
+            .map(|snapshot_id| self.snapshots[&snapshot_id].0.clone());
+        let applied_up_to = initial_snapshot
+            .as_ref()
+            .map(|s| s.last_log_index)
+            .unwrap_or(LogIndex(0));
         self.state = State::new(
             node_id,
             InitialState {
                 hard_state: self.hard_state.clone(),
-                initial_snapshot: None,
-                log_terms: self.log_entries.iter().map(|e| e.term).collect(),
+                initial_snapshot,
+                log_terms: self
+                    .log_entries
+                    .iter()
+                    .skip(applied_up_to.0 as usize)
+                    .map(|e| e.term)
+                    .collect(),
                 membership_changes: self
                     .log_entries
                     .iter()
                     .enumerate()
+                    .skip(applied_up_to.0 as usize)
                     .filter_map(|(i, e)| {
                         if let EntryPayload::MembershipChange(m) = &e.payload {
                             Some((LogIndex(i as u64 + 1), m.clone()))
@@ -46,7 +67,7 @@ impl NodeState {
             },
             config,
         );
-        self.applied_up_to = LogIndex(0);
+        self.applied_up_to = applied_up_to;
         self.next_tick = Some(Timestamp(0));
     }
     fn is_bootstrapped(&self) -> bool {
@@ -57,6 +78,7 @@ impl NodeState {
 enum InFlightOp {
     Message(Message<Data>),
     Storage(StorageOp),
+    Snapshot(NodeId, SnapshotDownload),
 }
 
 struct StorageOp {
@@ -77,6 +99,7 @@ struct MultiNodeState {
 
 const MAX_NODES: u64 = 19;
 const MAX_LATENCY: u64 = 5000;
+const MAX_DOWNLOAD_TIME: u64 = 15000;
 
 scoped_thread_local!(static mut INPUT: Unstructured<'static>);
 
@@ -107,6 +130,8 @@ impl MultiNodeState {
                         hard_state: HardState::default(),
                         applied_up_to: LogIndex(0),
                         next_tick: None,
+                        snapshots: BTreeMap::new(),
+                        current_snapshot: None,
                     },
                 )
             })
@@ -152,6 +177,13 @@ impl MultiNodeState {
                         assert!(!node.state.is_leader());
                         node.log_entries.truncate(x.last_log_index.0 as usize)
                     }
+                    Action::CompactLog(x) => {
+                        node.current_snapshot = Some(x.snapshot_id.clone());
+                        if x.reset_state {
+                            node.log_entries = node.snapshots[&x.snapshot_id].1.log_entries.clone();
+                            node.applied_up_to = x.snapshot_id.last_log_index;
+                        }
+                    }
                     Action::ExtendLog(x) => node
                         .log_entries
                         .extend(x.entries.into_iter().map(|e| e.entry)),
@@ -195,6 +227,13 @@ impl MultiNodeState {
                         node.applied_up_to = x.up_to_log_index;
                     }
                     Action::LoadLog(x) => {
+                        if let Some(snapshot_id) = &node.current_snapshot {
+                            let snapshot = &node.snapshots[snapshot_id].0;
+                            assert!(
+                                *x.desired_entries.iter().next().unwrap() > snapshot.last_log_index
+                            )
+                        }
+
                         let delay = INPUT.with(|input| input.int_in_range(0..=MAX_LATENCY))?;
                         in_flight_ops.push((
                             self.timestamp + Duration(delay),
@@ -211,6 +250,24 @@ impl MultiNodeState {
                                     })
                                     .collect(),
                             }),
+                        ));
+                    }
+                    Action::CancelDownloadSnapshot => self.in_flight_ops.retain(|_, v| {
+                        v.retain(|in_flight_op| {
+                            if let InFlightOp::Snapshot(node_id2, _) = in_flight_op {
+                                node_id != *node_id2
+                            } else {
+                                true
+                            }
+                        });
+                        !v.is_empty()
+                    }),
+                    Action::BeginDownloadSnapshot(x) => {
+                        let delay =
+                            INPUT.with(|input| input.int_in_range(0..=MAX_DOWNLOAD_TIME))?;
+                        in_flight_ops.push((
+                            self.timestamp + Duration(delay),
+                            InFlightOp::Snapshot(node_id, x),
                         ));
                     }
                 }
@@ -294,6 +351,37 @@ impl MultiNodeState {
                             s.node_id,
                             Event::LoadedLog(LoadedLogEvent { entries: s.entries }),
                         ),
+                        InFlightOp::Snapshot(node_id, s) => {
+                            if INPUT.with(|input| input.ratio(1, 4))? {
+                                self.handle(
+                                    node_id,
+                                    Event::ClientRequest(ClientRequest {
+                                        request_id: None,
+                                        payload: ClientRequestPayload::FailedToDownloadSnapshot,
+                                    }),
+                                )
+                            } else {
+                                let (snapshot, snapshot_data) =
+                                    self.nodes[&s.from_id].snapshots[&s.snapshot_id].clone();
+                                self.nodes
+                                    .get_mut(&node_id)
+                                    .unwrap()
+                                    .snapshots
+                                    .insert(s.snapshot_id, (snapshot.clone(), snapshot_data));
+                                self.handle(
+                                    node_id,
+                                    Event::ClientRequest(ClientRequest {
+                                        request_id: None,
+                                        payload: ClientRequestPayload::InstallSnapshot(
+                                            InstallSnapshotRequest {
+                                                was_downloaded: true,
+                                                snapshot,
+                                            },
+                                        ),
+                                    }),
+                                )
+                            }
+                        }
                     };
                 } else {
                     self.in_flight_ops.remove(&next_op);
@@ -332,6 +420,31 @@ impl MultiNodeState {
                             .collect()
                     }),
                 }),
+                2 => {
+                    let node_state = self.nodes.get_mut(&node_id).unwrap();
+                    let snapshot_data = SnapshotData {
+                        log_entries: node_state.log_entries[0..node_state.applied_up_to.0 as usize]
+                            .to_vec(),
+                    };
+
+                    let snapshot_id = SnapshotId {
+                        database_id: node_state.hard_state.database_id,
+                        last_log_index: node_state.applied_up_to,
+                    };
+                    let snapshot = Snapshot {
+                        database_id: node_state.hard_state.database_id,
+                        last_log_index: node_state.applied_up_to,
+                        last_log_term: node_state.state.last_applied_log_term(),
+                        last_membership: node_state.state.last_applied_membership().clone(),
+                    };
+                    node_state
+                        .snapshots
+                        .insert(snapshot_id.clone(), (snapshot.clone(), snapshot_data));
+                    ClientRequestPayload::InstallSnapshot(InstallSnapshotRequest {
+                        snapshot,
+                        was_downloaded: false,
+                    })
+                }
                 _ => {
                     ClientRequestPayload::Application(Data(INPUT.with(|input| input.arbitrary())?))
                 }

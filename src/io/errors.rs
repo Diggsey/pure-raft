@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::NodeId;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum StateError {
+    DatabaseMismatch,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
 pub enum RequestError {
@@ -13,6 +18,7 @@ pub enum RequestError {
     Bootstrap(BootstrapError),
     SetMembers(SetMembersError),
     SetLearners(SetLearnersError),
+    State(StateError),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

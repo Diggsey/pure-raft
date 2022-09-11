@@ -2,11 +2,11 @@ use std::{cmp, collections::BTreeSet};
 
 use crate::{
     io::{errors::RequestError, FailedRequest},
-    AppendEntriesRequest, Config, EntryFromRequest, EntryPayload, InstallSnapshotRequest, LogIndex,
-    Message, MessagePayload, NodeId, Timestamp,
+    AppendEntriesRequest, Config, DownloadSnapshotRequest, EntryFromRequest, EntryPayload,
+    LogIndex, Message, MessagePayload, NodeId, StateError, Timestamp,
 };
 
-use super::{common::CommonState, replication::ReplicationState, Error};
+use super::{common::CommonState, replication::ReplicationState};
 
 pub struct OverlayState<'a, D> {
     // Semi-persistent state
@@ -24,7 +24,7 @@ pub struct OverlayState<'a, D> {
     pub messages: Vec<Message<D>>,
     pub failed_requests: Vec<FailedRequest>,
     pub changed_match_index: bool,
-    pub errors: Vec<Error>,
+    pub errors: Vec<StateError>,
     pub reset_to_snapshot: bool,
 }
 
@@ -161,7 +161,7 @@ impl<'a, D> OverlayState<'a, D> {
                 // Then we need to send a snapshot
                 self.send_message(
                     node_id,
-                    MessagePayload::InstallSnapshotRequest(InstallSnapshotRequest {
+                    MessagePayload::InstallSnapshotRequest(DownloadSnapshotRequest {
                         database_id: self.common.hard_state.database_id,
                         term: self.common.hard_state.current_term,
                         last_log_index: self.common.base_log_index,

@@ -7,7 +7,7 @@ use std::{
 use crate::{
     io::{
         initial_state::{HardState, InitialState},
-        BeginDownloadSnapshotAction,
+        SnapshotDownload,
     },
     Entry, LogIndex, Membership, NodeId, Term, Timestamp,
 };
@@ -30,13 +30,15 @@ pub struct CommonState<D> {
     pub base_log_index: LogIndex,
     pub base_log_term: Term,
     pub base_membership: Membership,
-    pub downloading_snapshot: Option<BeginDownloadSnapshotAction>,
+    pub downloading_snapshot: Option<SnapshotDownload>,
 }
 
 impl<D> CommonState<D> {
     pub fn new(this_id: NodeId, initial_state: InitialState) -> Self {
         let (base_log_index, base_log_term, base_membership) =
             if let Some(snapshot) = initial_state.initial_snapshot {
+                // If a snapshot is provided, the database ID must match our hard state
+                assert_eq!(snapshot.database_id, initial_state.hard_state.database_id);
                 (
                     snapshot.last_log_index,
                     snapshot.last_log_term,

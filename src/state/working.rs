@@ -7,30 +7,30 @@ use std::{
 use crate::{
     io::{
         client_requests::{
-            BootstrapRequest, ClientRequest, ClientRequestPayload, SetLearnersRequest,
-            SetMembersRequest,
+            BootstrapRequest, ClientRequest, ClientRequestPayload, InstallSnapshotRequest,
+            SetLearnersRequest, SetMembersRequest,
         },
         errors::{BootstrapError, RequestError, SetLearnersError, SetMembersError},
         messages::ConflictOpt,
-        Action, ApplyLogAction, BeginDownloadSnapshotAction, CompactLogAction, ExtendLogAction,
-        FailedRequest, LoadLogAction, SnapshotId, TruncateLogAction,
+        Action, ApplyLogAction, CompactLogAction, ExtendLogAction, FailedRequest, LoadLogAction,
+        SnapshotDownload, SnapshotId, TruncateLogAction,
     },
-    AppendEntriesRequest, AppendEntriesResponse, Entry, EntryFromRequest, EntryPayload, Event,
-    HardState, InstallSnapshotRequest, InstallSnapshotResponse, LogIndex, Membership,
+    AppendEntriesRequest, AppendEntriesResponse, DownloadSnapshotRequest, DownloadSnapshotResponse,
+    Entry, EntryFromRequest, EntryPayload, Event, HardState, LogIndex, Membership,
     MembershipChangeCondition, Message, MessagePayload, NodeId, Output, PreVoteRequest,
-    PreVoteResponse, RequestId, State, Term, Timestamp, VoteRequest, VoteResponse,
+    PreVoteResponse, RequestId, State, StateError, Term, Timestamp, VoteRequest, VoteResponse,
 };
 
 use super::{
     election::ElectionState, leader::LeaderState, overlay::OverlayState,
-    replication::ReplicationState, role::Role, Error,
+    replication::ReplicationState, role::Role,
 };
 
 pub struct OriginalState {
     pub hard_state: HardState,
     pub last_log_index: LogIndex,
     pub base_log_index: LogIndex,
-    pub downloading_snapshot: Option<BeginDownloadSnapshotAction>,
+    pub downloading_snapshot: Option<SnapshotDownload>,
 }
 
 pub struct WorkingState<'a, D> {
@@ -97,45 +97,6 @@ impl<'a, D> WorkingState<'a, D> {
                             .push(FailedRequest { request_id, error });
                     }
                 }
-            }
-            Event::InstallSnapshot(snapshot_event) => {
-                if snapshot_event.was_downloaded {
-                    self.original.downloading_snapshot = None;
-                }
-
-                let snapshot = snapshot_event.snapshot;
-                self.overlay.common.downloading_snapshot = None;
-                self.overlay.common.base_log_index = snapshot.last_log_index;
-                self.overlay.common.base_log_term = snapshot.last_log_term;
-
-                // If snapshot is ahead of our log
-                if snapshot.last_log_index >= self.overlay.common.last_log_index() {
-                    // just reset everything
-                    self.overlay.reset_to_snapshot();
-
-                // Otherwise, if snapshot is in our "unapplied" region
-                } else if snapshot.last_log_index > self.overlay.common.last_applied_log_index {
-                    // Check if snapshot conflicts with our log entries
-                    let unapplied_offset = (snapshot.last_log_index
-                        - self.overlay.common.last_applied_log_index)
-                        as usize;
-                    let expected_term =
-                        self.overlay.common.unapplied_log_terms[unapplied_offset - 1];
-                    // If snapshot does not conflict
-                    if expected_term == snapshot.last_log_term {
-                        // Simply commit up to the snapshot's last log index
-                        self.overlay.committed_index = snapshot.last_log_index;
-                    } else {
-                        // Otherwise, reset everything
-                        self.overlay.reset_to_snapshot();
-                    }
-                } else {
-                    // We are already ahead of the snapshot, nothing to do!
-                }
-            }
-            Event::FailedToDownloadSnapshot => {
-                self.original.downloading_snapshot = None;
-                self.overlay.common.downloading_snapshot = None;
             }
         };
         self.advance();
@@ -374,7 +335,7 @@ impl<'a, D> WorkingState<'a, D> {
         &mut self,
         from_id: NodeId,
         mut payload: AppendEntriesRequest<D>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), StateError> {
         self.overlay
             .common
             .hard_state
@@ -508,7 +469,7 @@ impl<'a, D> WorkingState<'a, D> {
         &mut self,
         from_id: NodeId,
         payload: AppendEntriesResponse,
-    ) -> Result<(), Error> {
+    ) -> Result<(), StateError> {
         self.acknowledge_term(payload.term, false);
 
         if let Role::Leader(leader_state) = self.role {
@@ -531,8 +492,8 @@ impl<'a, D> WorkingState<'a, D> {
     fn handle_install_snapshot_request(
         &mut self,
         from_id: NodeId,
-        payload: InstallSnapshotRequest,
-    ) -> Result<(), Error> {
+        payload: DownloadSnapshotRequest,
+    ) -> Result<(), StateError> {
         self.overlay
             .common
             .hard_state
@@ -546,7 +507,7 @@ impl<'a, D> WorkingState<'a, D> {
             if self.overlay.common.base_log_index >= payload.last_log_index {
                 Some(self.overlay.common.base_log_index)
             } else {
-                self.overlay.common.downloading_snapshot = Some(BeginDownloadSnapshotAction {
+                self.overlay.common.downloading_snapshot = Some(SnapshotDownload {
                     from_id,
                     snapshot_id: SnapshotId {
                         database_id: payload.database_id,
@@ -559,7 +520,7 @@ impl<'a, D> WorkingState<'a, D> {
 
         self.overlay.send_message(
             from_id,
-            MessagePayload::InstallSnapshotResponse(InstallSnapshotResponse {
+            MessagePayload::InstallSnapshotResponse(DownloadSnapshotResponse {
                 term: self.overlay.common.hard_state.current_term,
                 match_index,
             }),
@@ -570,8 +531,8 @@ impl<'a, D> WorkingState<'a, D> {
     fn handle_install_snapshot_response(
         &mut self,
         from_id: NodeId,
-        payload: InstallSnapshotResponse,
-    ) -> Result<(), Error> {
+        payload: DownloadSnapshotResponse,
+    ) -> Result<(), StateError> {
         self.acknowledge_term(payload.term, false);
 
         if let Role::Leader(leader_state) = self.role {
@@ -601,7 +562,11 @@ impl<'a, D> WorkingState<'a, D> {
         }
     }
 
-    fn handle_vote_request(&mut self, from_id: NodeId, payload: VoteRequest) -> Result<(), Error> {
+    fn handle_vote_request(
+        &mut self,
+        from_id: NodeId,
+        payload: VoteRequest,
+    ) -> Result<(), StateError> {
         self.overlay
             .common
             .hard_state
@@ -643,7 +608,7 @@ impl<'a, D> WorkingState<'a, D> {
         &mut self,
         from_id: NodeId,
         payload: VoteResponse,
-    ) -> Result<(), Error> {
+    ) -> Result<(), StateError> {
         self.acknowledge_term(payload.term, false);
 
         if payload.term == self.overlay.common.hard_state.current_term && payload.vote_granted {
@@ -662,7 +627,7 @@ impl<'a, D> WorkingState<'a, D> {
         &mut self,
         from_id: NodeId,
         payload: PreVoteRequest,
-    ) -> Result<(), Error> {
+    ) -> Result<(), StateError> {
         self.overlay
             .common
             .hard_state
@@ -690,7 +655,7 @@ impl<'a, D> WorkingState<'a, D> {
         &mut self,
         from_id: NodeId,
         payload: PreVoteResponse,
-    ) -> Result<(), Error> {
+    ) -> Result<(), StateError> {
         self.acknowledge_term(payload.term, false);
 
         if payload.term == self.overlay.common.hard_state.current_term && payload.vote_granted {
@@ -705,7 +670,7 @@ impl<'a, D> WorkingState<'a, D> {
         Ok(())
     }
 
-    fn handle_message(&mut self, message: Message<D>) -> Result<(), Error> {
+    fn handle_message(&mut self, message: Message<D>) -> Result<(), StateError> {
         match message.payload {
             MessagePayload::AppendEntriesRequest(payload) => {
                 self.handle_append_entries_request(message.from_id, payload)
@@ -758,6 +723,13 @@ impl<'a, D> WorkingState<'a, D> {
             }
             ClientRequestPayload::SetLearners(payload) => {
                 self.set_learners(client_request.request_id, payload)
+            }
+
+            ClientRequestPayload::InstallSnapshot(payload) => self.install_snapshot(payload),
+            ClientRequestPayload::FailedToDownloadSnapshot => {
+                self.original.downloading_snapshot = None;
+                self.overlay.common.downloading_snapshot = None;
+                Ok(())
             }
         }
     }
@@ -953,6 +925,46 @@ impl<'a, D> WorkingState<'a, D> {
         membership.set_learners(payload.learner_ids);
 
         self.internal_request(EntryPayload::MembershipChange(membership), request_id, true)
+    }
+    fn install_snapshot(&mut self, payload: InstallSnapshotRequest) -> Result<(), RequestError> {
+        if payload.was_downloaded {
+            self.original.downloading_snapshot = None;
+        }
+
+        let snapshot = payload.snapshot;
+        self.overlay
+            .common
+            .hard_state
+            .acknowledge_database_id(snapshot.database_id)
+            .map_err(RequestError::State)?;
+
+        self.overlay.common.downloading_snapshot = None;
+        self.overlay.common.base_log_index = snapshot.last_log_index;
+        self.overlay.common.base_log_term = snapshot.last_log_term;
+
+        // If snapshot is ahead of our log
+        if snapshot.last_log_index >= self.overlay.common.last_log_index() {
+            // just reset everything
+            self.overlay.reset_to_snapshot();
+
+        // Otherwise, if snapshot is in our "unapplied" region
+        } else if snapshot.last_log_index > self.overlay.common.last_applied_log_index {
+            // Check if snapshot conflicts with our log entries
+            let unapplied_offset =
+                (snapshot.last_log_index - self.overlay.common.last_applied_log_index) as usize;
+            let expected_term = self.overlay.common.unapplied_log_terms[unapplied_offset - 1];
+            // If snapshot does not conflict
+            if expected_term == snapshot.last_log_term {
+                // Simply commit up to the snapshot's last log index
+                self.overlay.committed_index = snapshot.last_log_index;
+            } else {
+                // Otherwise, reset everything
+                self.overlay.reset_to_snapshot();
+            }
+        } else {
+            // We are already ahead of the snapshot, nothing to do!
+        }
+        Ok(())
     }
 }
 

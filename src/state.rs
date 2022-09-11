@@ -1,9 +1,7 @@
-use serde::{Deserialize, Serialize};
-
 use crate::{
     io::{initial_state::InitialState, Input, Output},
     types::NodeId,
-    Config,
+    Config, LogIndex, Membership, Term,
 };
 
 use self::{common::CommonState, role::Role, working::WorkingState};
@@ -22,11 +20,6 @@ pub struct State<D> {
     role: Role,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum Error {
-    DatabaseMismatch,
-}
-
 impl<D> State<D> {
     pub fn new(this_id: NodeId, initial_state: InitialState, config: Config) -> Self {
         Self {
@@ -43,5 +36,14 @@ impl<D> State<D> {
     }
     pub fn is_leader(&self) -> bool {
         matches!(self.role, Role::Leader(_))
+    }
+    pub fn last_applied_log_index(&self) -> LogIndex {
+        self.common.last_applied_log_index
+    }
+    pub fn last_applied_log_term(&self) -> Term {
+        self.common.last_applied_log_term
+    }
+    pub fn last_applied_membership(&self) -> &Membership {
+        &self.common.last_applied_membership
     }
 }

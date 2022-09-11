@@ -6,9 +6,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    state::Error,
     types::{RequestId, Timestamp},
-    DatabaseId, Entry, EntryFromRequest, HardState, InitialSnapshot, LogIndex, NodeId,
+    DatabaseId, Entry, EntryFromRequest, HardState, LogIndex, NodeId, StateError,
 };
 
 use self::{client_requests::ClientRequest, errors::RequestError, messages::Message};
@@ -28,7 +27,7 @@ pub struct Input<D> {
 pub struct Output<D> {
     pub next_tick: Option<Timestamp>,
     pub actions: Vec<Action<D>>,
-    pub errors: Vec<Error>,
+    pub errors: Vec<StateError>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -37,21 +36,11 @@ pub enum Event<D> {
     LoadedLog(LoadedLogEvent<D>),
     ReceivedMessage(Message<D>),
     ClientRequest(ClientRequest<D>),
-    InstallSnapshot(InstallSnapshotEvent),
-    FailedToDownloadSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct LoadedLogEvent<D> {
     pub entries: BTreeMap<LogIndex, Arc<Entry<D>>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct InstallSnapshotEvent {
-    pub snapshot: InitialSnapshot,
-    /// True if this completes a previously requested snapshot
-    /// download.
-    pub was_downloaded: bool,
 }
 
 // Actions will always be returned in this order
@@ -66,7 +55,7 @@ pub enum Action<D> {
     ApplyLog(ApplyLogAction),
     LoadLog(LoadLogAction),
     CancelDownloadSnapshot,
-    BeginDownloadSnapshot(BeginDownloadSnapshotAction),
+    BeginDownloadSnapshot(SnapshotDownload),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -95,14 +84,14 @@ pub struct LoadLogAction {
     pub desired_entries: BTreeSet<LogIndex>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SnapshotId {
     pub database_id: DatabaseId,
     pub last_log_index: LogIndex,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct BeginDownloadSnapshotAction {
+pub struct SnapshotDownload {
     pub from_id: NodeId,
     pub snapshot_id: SnapshotId,
 }

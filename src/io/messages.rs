@@ -19,8 +19,8 @@ pub enum MessagePayload<D> {
     VoteResponse(VoteResponse),
     PreVoteRequest(PreVoteRequest),
     PreVoteResponse(PreVoteResponse),
-    InstallSnapshotRequest(InstallSnapshotRequest),
-    InstallSnapshotResponse(InstallSnapshotResponse),
+    InstallSnapshotRequest(DownloadSnapshotRequest),
+    InstallSnapshotResponse(DownloadSnapshotResponse),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -99,14 +99,14 @@ pub struct PreVoteResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct InstallSnapshotRequest {
+pub struct DownloadSnapshotRequest {
     pub database_id: DatabaseId,
     pub term: Term,
     pub last_log_index: LogIndex,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct InstallSnapshotResponse {
+pub struct DownloadSnapshotResponse {
     /// The receiving node's current term, for leader to update itself.
     pub term: Term,
     pub match_index: Option<LogIndex>,

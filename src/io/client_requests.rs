@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DatabaseId, NodeId, RequestId};
+use crate::{DatabaseId, NodeId, RequestId, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ClientRequest<D> {
@@ -16,6 +16,8 @@ pub enum ClientRequestPayload<D> {
     Application(D),
     SetMembers(SetMembersRequest),
     SetLearners(SetLearnersRequest),
+    InstallSnapshot(InstallSnapshotRequest),
+    FailedToDownloadSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -34,4 +36,12 @@ pub struct SetMembersRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SetLearnersRequest {
     pub learner_ids: BTreeSet<NodeId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct InstallSnapshotRequest {
+    pub snapshot: Snapshot,
+    /// True if this completes a previously requested snapshot
+    /// download.
+    pub was_downloaded: bool,
 }

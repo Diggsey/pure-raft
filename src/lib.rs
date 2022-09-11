@@ -9,18 +9,18 @@ pub use config::{Config, MembershipChangeCondition, RandomSampler, RandomSampler
 pub use entry::{Entry, EntryFromRequest, EntryPayload};
 pub use io::{
     client_requests::{
-        BootstrapRequest, ClientRequest, ClientRequestPayload, SetLearnersRequest,
-        SetMembersRequest,
+        BootstrapRequest, ClientRequest, ClientRequestPayload, InstallSnapshotRequest,
+        SetLearnersRequest, SetMembersRequest,
     },
-    errors::{BootstrapError, RequestError, SetLearnersError, SetMembersError},
-    initial_state::{HardState, InitialSnapshot, InitialState},
+    errors::{BootstrapError, RequestError, SetLearnersError, SetMembersError, StateError},
+    initial_state::{HardState, InitialState, Snapshot},
     messages::{
-        AppendEntriesRequest, AppendEntriesResponse, ConflictOpt, InstallSnapshotRequest,
-        InstallSnapshotResponse, Message, MessagePayload, PreVoteRequest, PreVoteResponse,
+        AppendEntriesRequest, AppendEntriesResponse, ConflictOpt, DownloadSnapshotRequest,
+        DownloadSnapshotResponse, Message, MessagePayload, PreVoteRequest, PreVoteResponse,
         VoteRequest, VoteResponse,
     },
-    Action, ApplyLogAction, Event, ExtendLogAction, FailedRequest, Input, LoadLogAction,
-    LoadedLogEvent, Output, TruncateLogAction,
+    Action, ApplyLogAction, CompactLogAction, Event, ExtendLogAction, FailedRequest, Input,
+    LoadLogAction, LoadedLogEvent, Output, SnapshotDownload, SnapshotId, TruncateLogAction,
 };
 pub use membership::{Membership, MembershipType};
 pub use state::State;
